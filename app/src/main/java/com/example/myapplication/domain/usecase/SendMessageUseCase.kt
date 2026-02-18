@@ -1,0 +1,10 @@
+package com.example.myapplication.domain.usecase
+
+import com.example.myapplication.domain.model.Message
+import com.example.myapplication.domain.repository.ChatRepository
+
+class SendMessageUseCase(private val repository: ChatRepository) {
+    suspend operator fun invoke(messages: List<Message>): Result<String> {
+        return repository.sendMessage(messages)
+    }
+}
