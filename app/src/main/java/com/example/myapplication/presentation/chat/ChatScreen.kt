@@ -6,13 +6,16 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -20,8 +23,10 @@ import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Send
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -34,6 +39,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
+import androidx.compose.material3.VerticalDivider
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -44,6 +50,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.runtime.collectAsState
 import com.example.myapplication.domain.model.Message
@@ -54,12 +61,22 @@ import org.koin.androidx.compose.koinViewModel
 fun ChatScreen(viewModel: ChatViewModel = koinViewModel()) {
     val uiState by viewModel.uiState.collectAsState()
     val listState = rememberLazyListState()
+    val unrestrictedListState = rememberLazyListState()
     val snackbarHostState = remember { SnackbarHostState() }
     var inputText by remember { mutableStateOf("") }
+
+    val splitScreen = uiState.settings.showWithoutRestrictions
+    val anyLoading = uiState.isLoading || uiState.isUnrestrictedLoading
 
     LaunchedEffect(uiState.messages.size) {
         if (uiState.messages.isNotEmpty()) {
             listState.animateScrollToItem(uiState.messages.size - 1)
+        }
+    }
+
+    LaunchedEffect(uiState.unrestrictedMessages.size) {
+        if (uiState.unrestrictedMessages.isNotEmpty()) {
+            unrestrictedListState.animateScrollToItem(uiState.unrestrictedMessages.size - 1)
         }
     }
 
@@ -70,6 +87,14 @@ fun ChatScreen(viewModel: ChatViewModel = koinViewModel()) {
         }
     }
 
+    if (uiState.isSettingsDialogVisible) {
+        SettingsDialog(
+            settings = uiState.settings,
+            onSave = { viewModel.saveSettings(it) },
+            onDismiss = { viewModel.hideSettingsDialog() }
+        )
+    }
+
     Scaffold(
         topBar = {
             TopAppBar(
@@ -77,7 +102,16 @@ fun ChatScreen(viewModel: ChatViewModel = koinViewModel()) {
                 colors = TopAppBarDefaults.topAppBarColors(
                     containerColor = MaterialTheme.colorScheme.primary,
                     titleContentColor = MaterialTheme.colorScheme.onPrimary
-                )
+                ),
+                actions = {
+                    IconButton(onClick = { viewModel.showSettingsDialog() }) {
+                        Icon(
+                            imageVector = Icons.Filled.Settings,
+                            contentDescription = "Settings",
+                            tint = MaterialTheme.colorScheme.onPrimary
+                        )
+                    }
+                }
             )
         },
         snackbarHost = {
@@ -92,60 +126,118 @@ fun ChatScreen(viewModel: ChatViewModel = koinViewModel()) {
                 .padding(paddingValues)
                 .imePadding()
         ) {
-            LazyColumn(
-                state = listState,
-                modifier = Modifier
-                    .weight(1f)
-                    .fillMaxWidth()
-                    .padding(horizontal = 8.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                item { Spacer(modifier = Modifier.padding(top = 8.dp)) }
-                items(uiState.messages, key = { it.id }) { message ->
-                    MessageBubble(message = message)
-                }
-                if (uiState.isLoading) {
-                    item {
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.Start
-                        ) {
-                            Box(
-                                modifier = Modifier
-                                    .background(
-                                        color = MaterialTheme.colorScheme.surfaceVariant,
-                                        shape = RoundedCornerShape(
-                                            topStart = 4.dp,
-                                            topEnd = 16.dp,
-                                            bottomStart = 16.dp,
-                                            bottomEnd = 16.dp
-                                        )
-                                    )
-                                    .padding(12.dp)
-                            ) {
-                                CircularProgressIndicator(
-                                    modifier = Modifier.size(20.dp),
-                                    strokeWidth = 2.dp
-                                )
-                            }
-                        }
+            if (splitScreen) {
+                Row(
+                    modifier = Modifier
+                        .weight(1f)
+                        .fillMaxWidth()
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = "With restrictions",
+                            style = MaterialTheme.typography.labelMedium,
+                            textAlign = TextAlign.Center,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .background(MaterialTheme.colorScheme.primaryContainer)
+                                .padding(vertical = 4.dp)
+                        )
+                        MessageList(
+                            messages = uiState.messages,
+                            isLoading = uiState.isLoading,
+                            listState = listState,
+                            modifier = Modifier.weight(1f)
+                        )
+                    }
+                    VerticalDivider(modifier = Modifier.fillMaxHeight())
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = "Without restrictions",
+                            style = MaterialTheme.typography.labelMedium,
+                            textAlign = TextAlign.Center,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .background(MaterialTheme.colorScheme.secondaryContainer)
+                                .padding(vertical = 4.dp)
+                        )
+                        MessageList(
+                            messages = uiState.unrestrictedMessages,
+                            isLoading = uiState.isUnrestrictedLoading,
+                            listState = unrestrictedListState,
+                            modifier = Modifier.weight(1f)
+                        )
                     }
                 }
-                item { Spacer(modifier = Modifier.padding(bottom = 4.dp)) }
+            } else {
+                MessageList(
+                    messages = uiState.messages,
+                    isLoading = uiState.isLoading,
+                    listState = listState,
+                    modifier = Modifier.weight(1f)
+                )
             }
 
             MessageInput(
                 text = inputText,
                 onTextChange = { inputText = it },
                 onSend = {
-                    if (inputText.isNotBlank() && !uiState.isLoading) {
+                    if (inputText.isNotBlank() && !anyLoading) {
                         viewModel.sendMessage(inputText)
                         inputText = ""
                     }
                 },
-                isLoading = uiState.isLoading
+                isLoading = anyLoading
             )
         }
+    }
+}
+
+@Composable
+private fun MessageList(
+    messages: List<Message>,
+    isLoading: Boolean,
+    listState: LazyListState,
+    modifier: Modifier = Modifier
+) {
+    LazyColumn(
+        state = listState,
+        modifier = modifier
+            .fillMaxWidth()
+            .padding(horizontal = 8.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        item { Spacer(modifier = Modifier.padding(top = 8.dp)) }
+        items(messages, key = { it.id }) { message ->
+            MessageBubble(message = message)
+        }
+        if (isLoading) {
+            item {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.Start
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .background(
+                                color = MaterialTheme.colorScheme.surfaceVariant,
+                                shape = RoundedCornerShape(
+                                    topStart = 4.dp,
+                                    topEnd = 16.dp,
+                                    bottomStart = 16.dp,
+                                    bottomEnd = 16.dp
+                                )
+                            )
+                            .padding(12.dp)
+                    ) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(20.dp),
+                            strokeWidth = 2.dp
+                        )
+                    }
+                }
+            }
+        }
+        item { Spacer(modifier = Modifier.padding(bottom = 4.dp)) }
     }
 }
 
@@ -204,7 +296,7 @@ private fun MessageInput(
             value = text,
             onValueChange = onTextChange,
             modifier = Modifier.weight(1f),
-            placeholder = { Text("Type a message…") },
+            placeholder = { Text("Type a message...") },
             maxLines = 4,
             keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
             keyboardActions = KeyboardActions(onSend = { onSend() }),

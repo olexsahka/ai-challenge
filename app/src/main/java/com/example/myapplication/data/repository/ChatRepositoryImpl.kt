@@ -8,16 +8,22 @@ import com.example.myapplication.domain.repository.ChatRepository
 
 class ChatRepositoryImpl(private val api: AnthropicApi) : ChatRepository {
 
-    override suspend fun sendMessage(messages: List<Message>): Result<String> {
+    override suspend fun sendMessage(
+        messages: List<Message>,
+        instructions: String?,
+        maxOutputTokens: Int?
+    ): Result<String> {
         return try {
             val request = ChatRequest(
                 model = "gpt-4o",
+                instructions = instructions?.takeIf { it.isNotBlank() },
                 input = messages.map { message ->
                     InputMessage(
                         role = if (message.isFromUser) "user" else "assistant",
                         content = message.content
                     )
-                }
+                },
+                max_output_tokens = maxOutputTokens
             )
             val response = api.sendMessage(request)
             val text = response.output

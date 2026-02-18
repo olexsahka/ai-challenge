@@ -4,7 +4,11 @@ import com.example.myapplication.domain.model.Message
 import com.example.myapplication.domain.repository.ChatRepository
 
 class SendMessageUseCase(private val repository: ChatRepository) {
-    suspend operator fun invoke(messages: List<Message>): Result<String> {
-        return repository.sendMessage(messages)
+    suspend operator fun invoke(
+        messages: List<Message>,
+        instructions: String? = null,
+        maxOutputTokens: Int? = null
+    ): Result<String> {
+        return repository.sendMessage(messages, instructions, maxOutputTokens)
     }
 }

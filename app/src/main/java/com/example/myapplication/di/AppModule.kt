@@ -2,12 +2,15 @@ package com.example.myapplication.di
 
 import com.example.myapplication.data.api.AnthropicApi
 import com.example.myapplication.data.repository.ChatRepositoryImpl
+import com.example.myapplication.data.repository.SettingsRepository
+import com.example.myapplication.data.repository.SettingsRepositoryImpl
 import com.example.myapplication.domain.repository.ChatRepository
 import com.example.myapplication.domain.usecase.SendMessageUseCase
 import com.example.myapplication.presentation.chat.ChatViewModel
 import okhttp3.OkHttpClient
 import okhttp3.logging.HttpLoggingInterceptor
 import java.util.concurrent.TimeUnit
+import org.koin.android.ext.koin.androidContext
 import org.koin.androidx.viewmodel.dsl.viewModel
 import org.koin.dsl.module
 import retrofit2.Retrofit
@@ -49,7 +52,9 @@ val appModule = module {
 
     single<ChatRepository> { ChatRepositoryImpl(get()) }
 
+    single<SettingsRepository> { SettingsRepositoryImpl(androidContext()) }
+
     factory { SendMessageUseCase(get()) }
 
-    viewModel { ChatViewModel(get()) }
+    viewModel { ChatViewModel(get(), get()) }
 }
