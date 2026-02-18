@@ -7,6 +7,7 @@ import com.example.myapplication.domain.usecase.SendMessageUseCase
 import com.example.myapplication.presentation.chat.ChatViewModel
 import okhttp3.OkHttpClient
 import okhttp3.logging.HttpLoggingInterceptor
+import java.util.concurrent.TimeUnit
 import org.koin.androidx.viewmodel.dsl.viewModel
 import org.koin.dsl.module
 import retrofit2.Retrofit
@@ -19,6 +20,9 @@ val appModule = module {
 
     single {
         OkHttpClient.Builder()
+            .connectTimeout(60, TimeUnit.SECONDS)
+            .readTimeout(60, TimeUnit.SECONDS)
+            .writeTimeout(60, TimeUnit.SECONDS)
             .addInterceptor(
                 HttpLoggingInterceptor().apply {
                     level = HttpLoggingInterceptor.Level.BODY
@@ -33,7 +37,6 @@ val appModule = module {
             }
             .build()
     }
-//2026-02-18 02:07:12.911  6736-6882  okhttp.OkHttpClient     com.example.myapplication            I  <-- HTTP FAILED: java.net.SocketTimeoutException: timeout
     single {
         Retrofit.Builder()
             .baseUrl(BASE_URL)
