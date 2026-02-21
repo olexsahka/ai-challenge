@@ -1,5 +1,6 @@
 package com.example.myapplication.presentation.chat
 
+import android.widget.Toast
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -12,7 +13,6 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListState
@@ -23,10 +23,10 @@ import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Send
+import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -49,8 +49,12 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.runtime.collectAsState
 import com.example.myapplication.domain.model.Message
@@ -60,25 +64,14 @@ import org.koin.androidx.compose.koinViewModel
 @Composable
 fun ChatScreen(viewModel: ChatViewModel = koinViewModel()) {
     val uiState by viewModel.uiState.collectAsState()
-    val listState = rememberLazyListState()
-    val unrestrictedListState = rememberLazyListState()
     val snackbarHostState = remember { SnackbarHostState() }
     var inputText by remember { mutableStateOf("") }
 
-    val splitScreen = uiState.settings.showWithoutRestrictions
-    val anyLoading = uiState.isLoading || uiState.isUnrestrictedLoading
+    val clipboardManager = LocalClipboardManager.current
+    val context = LocalContext.current
 
-    LaunchedEffect(uiState.messages.size) {
-        if (uiState.messages.isNotEmpty()) {
-            listState.animateScrollToItem(uiState.messages.size - 1)
-        }
-    }
-
-    LaunchedEffect(uiState.unrestrictedMessages.size) {
-        if (uiState.unrestrictedMessages.isNotEmpty()) {
-            unrestrictedListState.animateScrollToItem(uiState.unrestrictedMessages.size - 1)
-        }
-    }
+    val hasSplitScreen = uiState.profilePanes.isNotEmpty()
+    val anyLoading = uiState.isUnrestrictedLoading || uiState.profilePanes.any { it.isLoading }
 
     LaunchedEffect(uiState.error) {
         uiState.error?.let { error ->
@@ -104,6 +97,31 @@ fun ChatScreen(viewModel: ChatViewModel = koinViewModel()) {
                     titleContentColor = MaterialTheme.colorScheme.onPrimary
                 ),
                 actions = {
+                    IconButton(onClick = {
+                        val allText = buildString {
+                            appendLine("=== Unrestricted ===")
+                            uiState.unrestrictedMessages.forEach { msg ->
+                                val role = if (msg.isFromUser) "User" else "Assistant"
+                                appendLine("$role: ${msg.content}")
+                            }
+                            uiState.profilePanes.forEach { pane ->
+                                appendLine()
+                                appendLine("=== ${pane.profile.name.ifBlank { "Restricted" }} ===")
+                                pane.messages.forEach { msg ->
+                                    val role = if (msg.isFromUser) "User" else "Assistant"
+                                    appendLine("$role: ${msg.content}")
+                                }
+                            }
+                        }
+                        clipboardManager.setText(AnnotatedString(allText))
+                        Toast.makeText(context, "All chats copied", Toast.LENGTH_SHORT).show()
+                    }) {
+                        Icon(
+                            imageVector = Icons.Filled.ContentCopy,
+                            contentDescription = "Copy all chats",
+                            tint = MaterialTheme.colorScheme.onPrimary
+                        )
+                    }
                     IconButton(onClick = { viewModel.showSettingsDialog() }) {
                         Icon(
                             imageVector = Icons.Filled.Settings,
@@ -126,52 +144,44 @@ fun ChatScreen(viewModel: ChatViewModel = koinViewModel()) {
                 .padding(paddingValues)
                 .imePadding()
         ) {
-            if (splitScreen) {
+            if (hasSplitScreen) {
                 Row(
                     modifier = Modifier
                         .weight(1f)
                         .fillMaxWidth()
                 ) {
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text(
-                            text = "With restrictions",
-                            style = MaterialTheme.typography.labelMedium,
-                            textAlign = TextAlign.Center,
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .background(MaterialTheme.colorScheme.primaryContainer)
-                                .padding(vertical = 4.dp)
-                        )
-                        MessageList(
-                            messages = uiState.messages,
-                            isLoading = uiState.isLoading,
-                            listState = listState,
-                            modifier = Modifier.weight(1f)
-                        )
-                    }
-                    VerticalDivider(modifier = Modifier.fillMaxHeight())
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text(
-                            text = "Without restrictions",
-                            style = MaterialTheme.typography.labelMedium,
-                            textAlign = TextAlign.Center,
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .background(MaterialTheme.colorScheme.secondaryContainer)
-                                .padding(vertical = 4.dp)
-                        )
-                        MessageList(
-                            messages = uiState.unrestrictedMessages,
-                            isLoading = uiState.isUnrestrictedLoading,
-                            listState = unrestrictedListState,
+                    // Unrestricted pane
+                    PaneColumn(
+                        label = "Unrestricted",
+                        messages = uiState.unrestrictedMessages,
+                        isLoading = uiState.isUnrestrictedLoading,
+                        containerColor = MaterialTheme.colorScheme.secondaryContainer,
+                        modifier = Modifier.weight(1f)
+                    )
+
+                    // Profile panes
+                    uiState.profilePanes.forEach { pane ->
+                        VerticalDivider(modifier = Modifier.fillMaxHeight())
+                        PaneColumn(
+                            label = pane.profile.name.ifBlank { "Restricted" },
+                            messages = pane.messages,
+                            isLoading = pane.isLoading,
+                            containerColor = MaterialTheme.colorScheme.primaryContainer,
                             modifier = Modifier.weight(1f)
                         )
                     }
                 }
             } else {
+                // Single pane — unrestricted only
+                val listState = rememberLazyListState()
+                LaunchedEffect(uiState.unrestrictedMessages.size) {
+                    if (uiState.unrestrictedMessages.isNotEmpty()) {
+                        listState.animateScrollToItem(uiState.unrestrictedMessages.size - 1)
+                    }
+                }
                 MessageList(
-                    messages = uiState.messages,
-                    isLoading = uiState.isLoading,
+                    messages = uiState.unrestrictedMessages,
+                    isLoading = uiState.isUnrestrictedLoading,
                     listState = listState,
                     modifier = Modifier.weight(1f)
                 )
@@ -189,6 +199,42 @@ fun ChatScreen(viewModel: ChatViewModel = koinViewModel()) {
                 isLoading = anyLoading
             )
         }
+    }
+}
+
+@Composable
+private fun PaneColumn(
+    label: String,
+    messages: List<Message>,
+    isLoading: Boolean,
+    containerColor: Color,
+    modifier: Modifier = Modifier
+) {
+    val listState = rememberLazyListState()
+    LaunchedEffect(messages.size) {
+        if (messages.isNotEmpty()) {
+            listState.animateScrollToItem(messages.size - 1)
+        }
+    }
+
+    Column(modifier = modifier) {
+        Text(
+            text = label,
+            style = MaterialTheme.typography.labelMedium,
+            textAlign = TextAlign.Center,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier
+                .fillMaxWidth()
+                .background(containerColor)
+                .padding(vertical = 4.dp, horizontal = 4.dp)
+        )
+        MessageList(
+            messages = messages,
+            isLoading = isLoading,
+            listState = listState,
+            modifier = Modifier.weight(1f)
+        )
     }
 }
 
@@ -243,6 +289,9 @@ private fun MessageList(
 
 @Composable
 private fun MessageBubble(message: Message) {
+    val clipboardManager = LocalClipboardManager.current
+    val context = LocalContext.current
+
     val bubbleColor = if (message.isFromUser) {
         MaterialTheme.colorScheme.primary
     } else {
@@ -263,17 +312,35 @@ private fun MessageBubble(message: Message) {
         modifier = Modifier.fillMaxWidth(),
         horizontalArrangement = if (message.isFromUser) Arrangement.End else Arrangement.Start
     ) {
-        Surface(
-            shape = bubbleShape,
-            color = bubbleColor,
-            modifier = Modifier.widthIn(max = 280.dp)
+        Column(
+            horizontalAlignment = if (message.isFromUser) Alignment.End else Alignment.Start
         ) {
-            Text(
-                text = message.content,
-                color = textColor,
-                style = MaterialTheme.typography.bodyMedium,
-                modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)
-            )
+            Surface(
+                shape = bubbleShape,
+                color = bubbleColor,
+                modifier = Modifier.widthIn(max = 280.dp)
+            ) {
+                Text(
+                    text = message.content,
+                    color = textColor,
+                    style = MaterialTheme.typography.bodyMedium,
+                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)
+                )
+            }
+            IconButton(
+                onClick = {
+                    clipboardManager.setText(AnnotatedString(message.content))
+                    Toast.makeText(context, "Copied", Toast.LENGTH_SHORT).show()
+                },
+                modifier = Modifier.size(28.dp)
+            ) {
+                Icon(
+                    imageVector = Icons.Filled.ContentCopy,
+                    contentDescription = "Copy message",
+                    modifier = Modifier.size(14.dp),
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)
+                )
+            }
         }
     }
 }
