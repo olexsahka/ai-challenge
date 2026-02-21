@@ -6,6 +6,7 @@ interface ChatRepository {
     suspend fun sendMessage(
         messages: List<Message>,
         instructions: String? = null,
-        maxOutputTokens: Int? = null
+        maxOutputTokens: Int? = null,
+        temperature: Float = 1.0f
     ): Result<String>
 }

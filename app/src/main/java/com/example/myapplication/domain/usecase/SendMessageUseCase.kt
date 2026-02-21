@@ -7,8 +7,9 @@ class SendMessageUseCase(private val repository: ChatRepository) {
     suspend operator fun invoke(
         messages: List<Message>,
         instructions: String? = null,
-        maxOutputTokens: Int? = null
+        maxOutputTokens: Int? = null,
+        temperature: Float = 1.0f
     ): Result<String> {
-        return repository.sendMessage(messages, instructions, maxOutputTokens)
+        return repository.sendMessage(messages, instructions, maxOutputTokens, temperature)
     }
 }

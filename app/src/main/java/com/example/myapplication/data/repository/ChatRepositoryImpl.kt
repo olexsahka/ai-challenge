@@ -11,7 +11,8 @@ class ChatRepositoryImpl(private val api: AnthropicApi) : ChatRepository {
     override suspend fun sendMessage(
         messages: List<Message>,
         instructions: String?,
-        maxOutputTokens: Int?
+        maxOutputTokens: Int?,
+        temperature: Float
     ): Result<String> {
         return try {
             val request = ChatRequest(
@@ -23,7 +24,8 @@ class ChatRepositoryImpl(private val api: AnthropicApi) : ChatRepository {
                         content = message.content
                     )
                 },
-                max_output_tokens = maxOutputTokens
+                maxOutputTokens = maxOutputTokens,
+                temperature = temperature
             )
             val response = api.sendMessage(request)
             val text = response.output

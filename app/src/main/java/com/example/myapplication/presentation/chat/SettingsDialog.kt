@@ -15,6 +15,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -35,12 +36,15 @@ import androidx.compose.ui.unit.dp
 import com.example.myapplication.domain.model.RestrictionProfile
 import com.example.myapplication.domain.model.Settings
 
+private val TEMPERATURE_OPTIONS = listOf(0.0f, 0.7f, 1.0f, 1.2f)
+
 private data class MutableProfile(
     var name: String = "",
     var responseFormatDescription: String = "",
     var maxOutputTokensText: String = "",
     var stopSequence: String = "",
-    var generatePromptFirst: Boolean = false
+    var generatePromptFirst: Boolean = false,
+    var temperature: Float = 1.0f
 )
 
 private fun RestrictionProfile.toMutable() = MutableProfile(
@@ -48,7 +52,8 @@ private fun RestrictionProfile.toMutable() = MutableProfile(
     responseFormatDescription = responseFormatDescription,
     maxOutputTokensText = maxOutputTokens?.toString() ?: "",
     stopSequence = stopSequence,
-    generatePromptFirst = generatePromptFirst
+    generatePromptFirst = generatePromptFirst,
+    temperature = temperature
 )
 
 private fun MutableProfile.toDomain() = RestrictionProfile(
@@ -56,7 +61,8 @@ private fun MutableProfile.toDomain() = RestrictionProfile(
     responseFormatDescription = responseFormatDescription,
     maxOutputTokens = maxOutputTokensText.toIntOrNull(),
     stopSequence = stopSequence,
-    generatePromptFirst = generatePromptFirst
+    generatePromptFirst = generatePromptFirst,
+    temperature = temperature
 )
 
 @Composable
@@ -70,6 +76,9 @@ fun SettingsDialog(
     }
     var unrestrictedGeneratePromptFirst by remember {
         mutableStateOf(settings.unrestrictedGeneratePromptFirst)
+    }
+    var unrestrictedTemperature by remember {
+        mutableStateOf(settings.unrestrictedTemperature)
     }
     var createLesson3Chats by remember {
         mutableStateOf(settings.createLesson3Chats)
@@ -118,6 +127,11 @@ fun SettingsDialog(
                             onCheckedChange = { unrestrictedGeneratePromptFirst = it }
                         )
                     }
+                    Spacer(modifier = Modifier.height(8.dp))
+                    TemperatureSelector(
+                        selected = unrestrictedTemperature,
+                        onSelect = { unrestrictedTemperature = it }
+                    )
                 }
 
                 Spacer(modifier = Modifier.height(12.dp))
@@ -175,6 +189,7 @@ fun SettingsDialog(
                 onSave(Settings(
                     profiles = profiles.map { it.toDomain() },
                     unrestrictedGeneratePromptFirst = unrestrictedGeneratePromptFirst,
+                    unrestrictedTemperature = unrestrictedTemperature,
                     createLesson3Chats = createLesson3Chats
                 ))
             }) {
@@ -187,6 +202,37 @@ fun SettingsDialog(
             }
         }
     )
+}
+
+@Composable
+private fun TemperatureSelector(
+    selected: Float,
+    onSelect: (Float) -> Unit
+) {
+    Column {
+        Text(
+            text = "Temperature",
+            style = MaterialTheme.typography.bodyMedium
+        )
+        Spacer(modifier = Modifier.height(4.dp))
+        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            TEMPERATURE_OPTIONS.forEach { option ->
+                FilterChip(
+                    selected = selected == option,
+                    onClick = { onSelect(option) },
+                    label = {
+                        Text(
+                            text = if (option == option.toLong().toFloat()) {
+                                option.toLong().toString()
+                            } else {
+                                option.toString()
+                            }
+                        )
+                    }
+                )
+            }
+        }
+    }
 }
 
 @Composable
@@ -276,5 +322,10 @@ private fun ProfileCard(
                 onCheckedChange = { onUpdate(profile.copy(generatePromptFirst = it)) }
             )
         }
+        Spacer(modifier = Modifier.height(8.dp))
+        TemperatureSelector(
+            selected = profile.temperature,
+            onSelect = { onUpdate(profile.copy(temperature = it)) }
+        )
     }
 }

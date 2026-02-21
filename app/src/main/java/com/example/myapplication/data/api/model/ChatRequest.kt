@@ -4,7 +4,8 @@ data class ChatRequest(
     val model: String,
     val instructions: String? = null,
     val input: List<InputMessage>,
-    val max_output_tokens: Int? = null
+    val maxOutputTokens: Int? = null,
+    val temperature: Float = 1.0f
 )
 
 data class InputMessage(

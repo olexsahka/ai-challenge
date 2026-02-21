@@ -73,14 +73,16 @@ class ChatViewModel(
                         isUnrestricted = true,
                         paneIndex = -1,
                         instructions = null,
-                        maxOutputTokens = null
+                        maxOutputTokens = null,
+                        temperature = settings.unrestrictedTemperature
                     )
                 } else {
                     sendDirect(
                         isUnrestricted = true,
                         paneIndex = -1,
                         instructions = null,
-                        maxOutputTokens = null
+                        maxOutputTokens = null,
+                        temperature = settings.unrestrictedTemperature
                     )
                 }
             }
@@ -95,14 +97,16 @@ class ChatViewModel(
                             isUnrestricted = false,
                             paneIndex = index,
                             instructions = instructions,
-                            maxOutputTokens = profile.maxOutputTokens
+                            maxOutputTokens = profile.maxOutputTokens,
+                            temperature = profile.temperature
                         )
                     } else {
                         sendDirect(
                             isUnrestricted = false,
                             paneIndex = index,
                             instructions = instructions,
-                            maxOutputTokens = profile.maxOutputTokens
+                            maxOutputTokens = profile.maxOutputTokens,
+                            temperature = profile.temperature
                         )
                     }
                 }
@@ -114,7 +118,8 @@ class ChatViewModel(
         isUnrestricted: Boolean,
         paneIndex: Int,
         instructions: String?,
-        maxOutputTokens: Int?
+        maxOutputTokens: Int?,
+        temperature: Float
     ) {
         val messages = if (isUnrestricted) {
             _uiState.value.unrestrictedMessages
@@ -122,7 +127,7 @@ class ChatViewModel(
             _uiState.value.profilePanes.getOrNull(paneIndex)?.messages ?: return
         }
 
-        val result = sendMessageUseCase(messages, instructions, maxOutputTokens)
+        val result = sendMessageUseCase(messages, instructions, maxOutputTokens, temperature)
 
         result.fold(
             onSuccess = { responseText ->
@@ -179,7 +184,8 @@ class ChatViewModel(
         isUnrestricted: Boolean,
         paneIndex: Int,
         instructions: String?,
-        maxOutputTokens: Int?
+        maxOutputTokens: Int?,
+        temperature: Float
     ) {
         // Get current messages for this pane
         val currentMessages = if (isUnrestricted) {
@@ -216,7 +222,7 @@ class ChatViewModel(
         }
 
         // Step 1: Send meta-prompt
-        val step1Result = sendMessageUseCase(messagesWithMeta, instructions, maxOutputTokens)
+        val step1Result = sendMessageUseCase(messagesWithMeta, instructions, maxOutputTokens, temperature)
 
         step1Result.fold(
             onSuccess = { generatedPrompt ->
@@ -258,7 +264,7 @@ class ChatViewModel(
                     _uiState.value.profilePanes.getOrNull(paneIndex)?.messages ?: return
                 }
 
-                val step2Result = sendMessageUseCase(step2Messages, instructions, maxOutputTokens)
+                val step2Result = sendMessageUseCase(step2Messages, instructions, maxOutputTokens, temperature)
 
                 step2Result.fold(
                     onSuccess = { finalResponse ->
@@ -336,19 +342,28 @@ class ChatViewModel(
         val effectiveSettings = if (settings.createLesson3Chats) {
             val lesson3Profiles = listOf(
                 RestrictionProfile(
+                    name = "Unrestricted",
+                    responseFormatDescription = "",
+                    generatePromptFirst = false,
+                    temperature = 1.0f
+                ),
+                RestrictionProfile(
                     name = "Step by step",
                     responseFormatDescription = "Solve this task step by step",
-                    generatePromptFirst = false
+                    generatePromptFirst = false,
+                    temperature = 1.0f
                 ),
                 RestrictionProfile(
                     name = "Generate prompt first",
                     responseFormatDescription = "",
-                    generatePromptFirst = true
+                    generatePromptFirst = true,
+                    temperature = 1.0f
                 ),
                 RestrictionProfile(
                     name = "Multi-role",
                     responseFormatDescription = "Answer with multi-role reasoning. Provide the answer from the following perspectives:\n1. Analytic: analyze the problem systematically\n2. Engineer: provide a practical technical solution\n3. Critic: identify potential issues and limitations",
-                    generatePromptFirst = false
+                    generatePromptFirst = false,
+                    temperature = 1.0f
                 )
             )
             settings.copy(profiles = lesson3Profiles, createLesson3Chats = false)
