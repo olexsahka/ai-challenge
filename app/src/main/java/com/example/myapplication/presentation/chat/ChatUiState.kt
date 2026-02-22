@@ -16,5 +16,8 @@ data class ChatUiState(
     val profilePanes: List<PaneState> = emptyList(),
     val error: String? = null,
     val settings: Settings = Settings(),
-    val isSettingsDialogVisible: Boolean = false
+    val isSettingsDialogVisible: Boolean = false,
+    val availableModels: List<String> = emptyList(),
+    val isLoadingModels: Boolean = false,
+    val usdToRub: Double = 90.0
 )

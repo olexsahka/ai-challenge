@@ -56,5 +56,5 @@ val appModule = module {
 
     factory { SendMessageUseCase(get()) }
 
-    viewModel { ChatViewModel(get(), get()) }
+    viewModel { ChatViewModel(get(), get(), get(), get()) }
 }

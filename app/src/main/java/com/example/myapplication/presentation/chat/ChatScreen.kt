@@ -2,6 +2,7 @@ package com.example.myapplication.presentation.chat
 
 import android.widget.Toast
 import androidx.compose.foundation.background
+import com.example.myapplication.domain.model.MessageMeta
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -83,6 +84,8 @@ fun ChatScreen(viewModel: ChatViewModel = koinViewModel()) {
     if (uiState.isSettingsDialogVisible) {
         SettingsDialog(
             settings = uiState.settings,
+            availableModels = uiState.availableModels,
+            isLoadingModels = uiState.isLoadingModels,
             onSave = { viewModel.saveSettings(it) },
             onDismiss = { viewModel.hideSettingsDialog() }
         )
@@ -156,6 +159,7 @@ fun ChatScreen(viewModel: ChatViewModel = koinViewModel()) {
                         messages = uiState.unrestrictedMessages,
                         isLoading = uiState.isUnrestrictedLoading,
                         containerColor = MaterialTheme.colorScheme.secondaryContainer,
+                        usdToRub = uiState.usdToRub,
                         modifier = Modifier.weight(1f)
                     )
 
@@ -167,6 +171,7 @@ fun ChatScreen(viewModel: ChatViewModel = koinViewModel()) {
                             messages = pane.messages,
                             isLoading = pane.isLoading,
                             containerColor = MaterialTheme.colorScheme.primaryContainer,
+                            usdToRub = uiState.usdToRub,
                             modifier = Modifier.weight(1f)
                         )
                     }
@@ -183,6 +188,7 @@ fun ChatScreen(viewModel: ChatViewModel = koinViewModel()) {
                     messages = uiState.unrestrictedMessages,
                     isLoading = uiState.isUnrestrictedLoading,
                     listState = listState,
+                    usdToRub = uiState.usdToRub,
                     modifier = Modifier.weight(1f)
                 )
             }
@@ -208,6 +214,7 @@ private fun PaneColumn(
     messages: List<Message>,
     isLoading: Boolean,
     containerColor: Color,
+    usdToRub: Double,
     modifier: Modifier = Modifier
 ) {
     val listState = rememberLazyListState()
@@ -233,6 +240,7 @@ private fun PaneColumn(
             messages = messages,
             isLoading = isLoading,
             listState = listState,
+            usdToRub = usdToRub,
             modifier = Modifier.weight(1f)
         )
     }
@@ -243,6 +251,7 @@ private fun MessageList(
     messages: List<Message>,
     isLoading: Boolean,
     listState: LazyListState,
+    usdToRub: Double,
     modifier: Modifier = Modifier
 ) {
     LazyColumn(
@@ -254,7 +263,7 @@ private fun MessageList(
     ) {
         item { Spacer(modifier = Modifier.padding(top = 8.dp)) }
         items(messages, key = { it.id }) { message ->
-            MessageBubble(message = message)
+            MessageBubble(message = message, usdToRub = usdToRub)
         }
         if (isLoading) {
             item {
@@ -287,8 +296,25 @@ private fun MessageList(
     }
 }
 
+private fun estimateCostUsd(meta: MessageMeta): Double {
+    val modelLower = meta.model.lowercase()
+    val (inputPricePerM, outputPricePerM) = when {
+        "gpt-4o-mini" in modelLower -> Pair(0.15, 0.60)
+        "gpt-4o" in modelLower -> Pair(2.50, 10.00)
+        "gpt-4-turbo" in modelLower -> Pair(10.00, 30.00)
+        "gpt-4" in modelLower -> Pair(30.00, 60.00)
+        "gpt-3.5" in modelLower -> Pair(0.50, 1.50)
+        "o1-mini" in modelLower -> Pair(1.10, 4.40)
+        "o1" in modelLower -> Pair(15.00, 60.00)
+        "o3-mini" in modelLower -> Pair(1.10, 4.40)
+        "o3" in modelLower -> Pair(10.00, 40.00)
+        else -> Pair(2.50, 10.00)
+    }
+    return (meta.inputTokens * inputPricePerM + meta.outputTokens * outputPricePerM) / 1_000_000.0
+}
+
 @Composable
-private fun MessageBubble(message: Message) {
+private fun MessageBubble(message: Message, usdToRub: Double) {
     val clipboardManager = LocalClipboardManager.current
     val context = LocalContext.current
 
@@ -327,6 +353,9 @@ private fun MessageBubble(message: Message) {
                     modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)
                 )
             }
+            if (!message.isFromUser && message.meta != null) {
+                MessageMetaRow(meta = message.meta, usdToRub = usdToRub)
+            }
             IconButton(
                 onClick = {
                     clipboardManager.setText(AnnotatedString(message.content))
@@ -343,6 +372,26 @@ private fun MessageBubble(message: Message) {
             }
         }
     }
+}
+
+@Composable
+private fun MessageMetaRow(meta: MessageMeta, usdToRub: Double) {
+    val costUsd = estimateCostUsd(meta)
+    val costRub = costUsd * usdToRub
+    val usdText = if (costUsd < 0.000001) "<$0.000001" else "$${"%.6f".format(costUsd)}"
+    val rubText = if (costRub < 0.0001) "<₽0.0001" else "₽${"%.4f".format(costRub)}"
+    val durationText = if (meta.durationMs >= 1000) {
+        "${"%.1f".format(meta.durationMs / 1000.0)}s"
+    } else {
+        "${meta.durationMs}ms"
+    }
+    val totalTokens = meta.inputTokens + meta.outputTokens
+    Text(
+        text = "↑${meta.inputTokens} ↓${meta.outputTokens} · ${totalTokens}tok · $durationText · $usdText · $rubText",
+        style = MaterialTheme.typography.labelSmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f),
+        modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp)
+    )
 }
 
 @Composable

@@ -2,22 +2,29 @@ package com.example.myapplication.presentation.chat
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.example.myapplication.data.api.AnthropicApi
 import com.example.myapplication.data.repository.SettingsRepository
 import com.example.myapplication.domain.model.Message
 import com.example.myapplication.domain.model.RestrictionProfile
 import com.example.myapplication.domain.model.Settings
 import com.example.myapplication.domain.usecase.SendMessageUseCase
-import kotlinx.coroutines.async
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import okhttp3.OkHttpClient
+import okhttp3.Request
+import org.json.JSONObject
 import java.util.UUID
 
 class ChatViewModel(
     private val sendMessageUseCase: SendMessageUseCase,
-    private val settingsRepository: SettingsRepository
+    private val settingsRepository: SettingsRepository,
+    private val api: AnthropicApi,
+    private val httpClient: OkHttpClient
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(ChatUiState())
@@ -30,6 +37,31 @@ class ChatViewModel(
                 settings = settings,
                 profilePanes = settings.profiles.map { profile -> PaneState(profile = profile) }
             )
+        }
+        fetchUsdToRub()
+    }
+
+    private fun fetchUsdToRub() {
+        viewModelScope.launch {
+            try {
+                val rate = withContext(Dispatchers.IO) {
+                    val request = Request.Builder()
+                        .url("https://www.cbr-xml-daily.ru/daily_json.js")
+                        .build()
+                    httpClient.newCall(request).execute().use { response ->
+                        val body = response.body?.string() ?: return@withContext null
+                        val json = JSONObject(body)
+                        json.getJSONObject("Valute")
+                            .getJSONObject("USD")
+                            .getDouble("Value")
+                    }
+                }
+                if (rate != null) {
+                    _uiState.update { it.copy(usdToRub = rate) }
+                }
+            } catch (_: Exception) {
+                // keep default 90.0
+            }
         }
     }
 
@@ -74,7 +106,8 @@ class ChatViewModel(
                         paneIndex = -1,
                         instructions = null,
                         maxOutputTokens = null,
-                        temperature = settings.unrestrictedTemperature
+                        temperature = settings.unrestrictedTemperature,
+                        model = settings.unrestrictedModel
                     )
                 } else {
                     sendDirect(
@@ -82,7 +115,8 @@ class ChatViewModel(
                         paneIndex = -1,
                         instructions = null,
                         maxOutputTokens = null,
-                        temperature = settings.unrestrictedTemperature
+                        temperature = settings.unrestrictedTemperature,
+                        model = settings.unrestrictedModel
                     )
                 }
             }
@@ -98,7 +132,8 @@ class ChatViewModel(
                             paneIndex = index,
                             instructions = instructions,
                             maxOutputTokens = profile.maxOutputTokens,
-                            temperature = profile.temperature
+                            temperature = profile.temperature,
+                            model = profile.model
                         )
                     } else {
                         sendDirect(
@@ -106,7 +141,8 @@ class ChatViewModel(
                             paneIndex = index,
                             instructions = instructions,
                             maxOutputTokens = profile.maxOutputTokens,
-                            temperature = profile.temperature
+                            temperature = profile.temperature,
+                            model = profile.model
                         )
                     }
                 }
@@ -119,7 +155,8 @@ class ChatViewModel(
         paneIndex: Int,
         instructions: String?,
         maxOutputTokens: Int?,
-        temperature: Float
+        temperature: Float,
+        model: String = "gpt-4o"
     ) {
         val messages = if (isUnrestricted) {
             _uiState.value.unrestrictedMessages
@@ -127,14 +164,15 @@ class ChatViewModel(
             _uiState.value.profilePanes.getOrNull(paneIndex)?.messages ?: return
         }
 
-        val result = sendMessageUseCase(messages, instructions, maxOutputTokens, temperature)
+        val result = sendMessageUseCase(messages, instructions, maxOutputTokens, temperature, model)
 
         result.fold(
-            onSuccess = { responseText ->
+            onSuccess = { (responseText, meta) ->
                 val assistantMessage = Message(
                     id = UUID.randomUUID().toString(),
                     content = responseText,
-                    isFromUser = false
+                    isFromUser = false,
+                    meta = meta
                 )
                 if (isUnrestricted) {
                     _uiState.update {
@@ -185,7 +223,8 @@ class ChatViewModel(
         paneIndex: Int,
         instructions: String?,
         maxOutputTokens: Int?,
-        temperature: Float
+        temperature: Float,
+        model: String = "gpt-4o"
     ) {
         // Get current messages for this pane
         val currentMessages = if (isUnrestricted) {
@@ -222,10 +261,10 @@ class ChatViewModel(
         }
 
         // Step 1: Send meta-prompt
-        val step1Result = sendMessageUseCase(messagesWithMeta, instructions, maxOutputTokens, temperature)
+        val step1Result = sendMessageUseCase(messagesWithMeta, instructions, maxOutputTokens, temperature, model)
 
         step1Result.fold(
-            onSuccess = { generatedPrompt ->
+            onSuccess = { (generatedPrompt, _) ->
                 // Add generated prompt as assistant message
                 val assistantMsg = Message(
                     id = UUID.randomUUID().toString(),
@@ -264,14 +303,15 @@ class ChatViewModel(
                     _uiState.value.profilePanes.getOrNull(paneIndex)?.messages ?: return
                 }
 
-                val step2Result = sendMessageUseCase(step2Messages, instructions, maxOutputTokens, temperature)
+                val step2Result = sendMessageUseCase(step2Messages, instructions, maxOutputTokens, temperature, model)
 
                 step2Result.fold(
-                    onSuccess = { finalResponse ->
+                    onSuccess = { (finalResponse, finalMeta) ->
                         val finalMsg = Message(
                             id = UUID.randomUUID().toString(),
                             content = finalResponse,
-                            isFromUser = false
+                            isFromUser = false,
+                            meta = finalMeta
                         )
                         if (isUnrestricted) {
                             _uiState.update {
@@ -332,6 +372,23 @@ class ChatViewModel(
 
     fun showSettingsDialog() {
         _uiState.update { it.copy(isSettingsDialogVisible = true) }
+        viewModelScope.launch {
+            _uiState.update { it.copy(isLoadingModels = true) }
+            try {
+                val response = api.getModels()
+                val excludePattern = Regex(
+                    "image|audio|tts|transcribe|realtime|moderation|embedding|sora|whisper|dalle|search",
+                    RegexOption.IGNORE_CASE
+                )
+                val ids = response.data
+                    .map { it.id }
+                    .filter { !excludePattern.containsMatchIn(it) }
+                    .sorted()
+                _uiState.update { it.copy(availableModels = ids, isLoadingModels = false) }
+            } catch (e: Exception) {
+                _uiState.update { it.copy(isLoadingModels = false) }
+            }
+        }
     }
 
     fun hideSettingsDialog() {

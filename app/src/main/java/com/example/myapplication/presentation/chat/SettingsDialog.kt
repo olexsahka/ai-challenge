@@ -8,18 +8,24 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
@@ -44,7 +50,8 @@ private data class MutableProfile(
     var maxOutputTokensText: String = "",
     var stopSequence: String = "",
     var generatePromptFirst: Boolean = false,
-    var temperature: Float = 1.0f
+    var temperature: Float = 1.0f,
+    var model: String = "gpt-4o"
 )
 
 private fun RestrictionProfile.toMutable() = MutableProfile(
@@ -53,7 +60,8 @@ private fun RestrictionProfile.toMutable() = MutableProfile(
     maxOutputTokensText = maxOutputTokens?.toString() ?: "",
     stopSequence = stopSequence,
     generatePromptFirst = generatePromptFirst,
-    temperature = temperature
+    temperature = temperature,
+    model = model
 )
 
 private fun MutableProfile.toDomain() = RestrictionProfile(
@@ -62,12 +70,15 @@ private fun MutableProfile.toDomain() = RestrictionProfile(
     maxOutputTokens = maxOutputTokensText.toIntOrNull(),
     stopSequence = stopSequence,
     generatePromptFirst = generatePromptFirst,
-    temperature = temperature
+    temperature = temperature,
+    model = model
 )
 
 @Composable
 fun SettingsDialog(
     settings: Settings,
+    availableModels: List<String>,
+    isLoadingModels: Boolean,
     onSave: (Settings) -> Unit,
     onDismiss: () -> Unit
 ) {
@@ -79,6 +90,9 @@ fun SettingsDialog(
     }
     var unrestrictedTemperature by remember {
         mutableStateOf(settings.unrestrictedTemperature)
+    }
+    var unrestrictedModel by remember {
+        mutableStateOf(settings.unrestrictedModel)
     }
     var createLesson3Chats by remember {
         mutableStateOf(settings.createLesson3Chats)
@@ -132,6 +146,13 @@ fun SettingsDialog(
                         selected = unrestrictedTemperature,
                         onSelect = { unrestrictedTemperature = it }
                     )
+                    Spacer(modifier = Modifier.height(8.dp))
+                    ModelSelector(
+                        selected = unrestrictedModel,
+                        models = availableModels,
+                        isLoading = isLoadingModels,
+                        onSelect = { unrestrictedModel = it }
+                    )
                 }
 
                 Spacer(modifier = Modifier.height(12.dp))
@@ -164,6 +185,8 @@ fun SettingsDialog(
                     ProfileCard(
                         index = index,
                         profile = profile,
+                        availableModels = availableModels,
+                        isLoadingModels = isLoadingModels,
                         onUpdate = { profiles[index] = it },
                         onDelete = { profiles.removeAt(index) }
                     )
@@ -190,6 +213,7 @@ fun SettingsDialog(
                     profiles = profiles.map { it.toDomain() },
                     unrestrictedGeneratePromptFirst = unrestrictedGeneratePromptFirst,
                     unrestrictedTemperature = unrestrictedTemperature,
+                    unrestrictedModel = unrestrictedModel,
                     createLesson3Chats = createLesson3Chats
                 ))
             }) {
@@ -236,9 +260,60 @@ private fun TemperatureSelector(
 }
 
 @Composable
+private fun ModelSelector(
+    selected: String,
+    models: List<String>,
+    isLoading: Boolean,
+    onSelect: (String) -> Unit
+) {
+    var expanded by remember { mutableStateOf(false) }
+    Column {
+        Text(
+            text = "Model",
+            style = MaterialTheme.typography.bodyMedium
+        )
+        Spacer(modifier = Modifier.height(4.dp))
+        if (isLoading) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                CircularProgressIndicator(modifier = Modifier.size(20.dp).padding(end = 8.dp))
+                Text(text = "Loading models...", style = MaterialTheme.typography.bodySmall)
+            }
+        } else {
+            OutlinedButton(
+                onClick = { expanded = true },
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text(
+                    text = selected.ifBlank { "Select model" },
+                    modifier = Modifier.weight(1f)
+                )
+                Icon(Icons.Filled.ArrowDropDown, contentDescription = null)
+            }
+            DropdownMenu(
+                expanded = expanded,
+                onDismissRequest = { expanded = false }
+            ) {
+                val displayList = if (models.isEmpty()) listOf(selected) else models
+                displayList.forEach { modelId ->
+                    DropdownMenuItem(
+                        text = { Text(modelId) },
+                        onClick = {
+                            onSelect(modelId)
+                            expanded = false
+                        }
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
 private fun ProfileCard(
     index: Int,
     profile: MutableProfile,
+    availableModels: List<String>,
+    isLoadingModels: Boolean,
     onUpdate: (MutableProfile) -> Unit,
     onDelete: () -> Unit
 ) {
@@ -326,6 +401,13 @@ private fun ProfileCard(
         TemperatureSelector(
             selected = profile.temperature,
             onSelect = { onUpdate(profile.copy(temperature = it)) }
+        )
+        Spacer(modifier = Modifier.height(8.dp))
+        ModelSelector(
+            selected = profile.model,
+            models = availableModels,
+            isLoading = isLoadingModels,
+            onSelect = { onUpdate(profile.copy(model = it)) }
         )
     }
 }
