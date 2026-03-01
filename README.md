@@ -2,9 +2,9 @@
 
 ## 1. Project Overview
 
-**Purpose:** Android chat application for comparing LLM responses across multiple restriction profiles side by side.
+**Purpose:** Android AI agent application with persistent sessions, memory, and per-session context configuration.
 
-**Core idea:** A single user input is broadcast simultaneously to an unrestricted chat pane and up to four configurable restriction profile panes. Each pane sends the message independently to an OpenAI-compatible API with its own system prompt, token limit, temperature, model, and prompt-generation mode. Responses appear in parallel in a split-screen layout. Each assistant response shows a cost/stats line with token counts, latency, and price in both USD and RUB.
+**Core idea:** A single screen hosts a session-based LLM chat backed by `LLMAgent`. Each session stores its full message history in a local Room database and is restored on app restart. The agent supports a configurable system prompt, model, and temperature per session. A shared key-value memory store (SharedPreferences) is automatically injected into every request so the model has cross-session context.
 
 ---
 
@@ -14,148 +14,117 @@
 
 ```
 Presentation  →  Domain  →  Data
-    │                          │
-ChatScreen               AnthropicApi (Retrofit)
-ChatViewModel            ChatRepositoryImpl
-SettingsDialog           SettingsRepositoryImpl
+     │                         │
+AgentScreen              AnthropicApi (Retrofit)
+AgentViewModel           LLMAgent
+                         AppDatabase (Room)
+                         AgentMemory (SharedPreferences)
 ```
 
 ### Component responsibilities
 
 | Component | Responsibility |
 |---|---|
-| `MainActivity` | Single-activity host; sets up Compose content tree |
+| `MainActivity` | Single-activity host; renders `AgentScreen` |
 | `MyApp` | Application class; initializes Koin DI |
-| `ChatScreen` | Renders split-screen pane layout, top bar, message input, snackbar, per-message meta row |
-| `ChatViewModel` | Owns `ChatUiState`; orchestrates parallel message dispatch; applies settings; fetches available models and USD→RUB exchange rate on startup |
-| `SettingsDialog` | Form UI for editing `Settings` and `RestrictionProfile` list; includes model selector populated from `GET /v1/models` |
-| `SendMessageUseCase` | Thin delegation layer from domain to data |
-| `ChatRepository` / `ChatRepositoryImpl` | Converts domain messages to API request; parses response; measures wall-clock latency; extracts token usage |
-| `SettingsRepository` / `SettingsRepositoryImpl` | Persists restriction profiles via `SharedPreferences` + Gson |
+| `AgentScreen` | Session sidebar, message list, message input, context settings bottom sheet |
+| `AgentViewModel` | Owns `AgentUiState`; bridges UI to `LLMAgent`; exposes session list, active messages, and memory entries as `StateFlow` |
+| `LLMAgent` | Encapsulates all request logic: builds history from DB, assembles instructions (system prompt + memory), calls API, persists both user and assistant messages |
+| `AgentMemory` | Key-value memory store backed by `SharedPreferences`; injected into every request as additional instructions |
+| `AppDatabase` | Room database with `sessions` and `messages` tables |
+| `SessionDao` | CRUD for sessions; `observeAll()`, `getLatest()`, `getById()`, `updateContext()` |
+| `MessageDao` | Insert and observe messages by session |
 | `AnthropicApi` | Retrofit interface; `POST /responses` and `GET /models` endpoints |
 
 ### Component interactions
 
 ```
 User input
-    └─► ChatViewModel.sendMessage()
-            ├─► [unrestricted pane] sendDirect() or sendWithPromptGeneration()
-            └─► [each profile pane] sendDirect() or sendWithPromptGeneration()
-                        └─► SendMessageUseCase.invoke()
-                                └─► ChatRepositoryImpl.sendMessage()
-                                        └─► AnthropicApi.sendMessage()
-                                                └─► POST https://api.proxyapi.ru/openai/v1/responses
-                                        └─► returns Pair<String, MessageMeta>
+    └─► AgentViewModel.sendMessage()
+            └─► LLMAgent.sendMessage(sessionId, text)
+                    ├─► messageDao.insert(userMessage)
+                    ├─► sessionDao.getById()        → loads model, temperature, systemPrompt
+                    ├─► messageDao.observeBySession().first()  → full conversation history
+                    ├─► AgentMemory.toContextString()  → appended to instructions
+                    └─► AnthropicApi.sendMessage()
+                            └─► POST https://api.proxyapi.ru/openai/v1/responses
+                    └─► messageDao.insert(assistantMessage)
 ```
 
-Settings flow:
+Session lifecycle:
 ```
-SettingsDialog → onSave callback → ChatViewModel.saveSettings()
-    ├─► SettingsRepositoryImpl.saveSettings()  (persists profiles to SharedPreferences)
-    └─► _uiState.update()  (rebuilds pane list; retains existing message history by index)
-```
+App start
+    └─► AgentViewModel.init
+            └─► LLMAgent.getOrRestoreLastSession()  → restores most recent session
+            └─► LLMAgent.observeSessions()           → live session list via Flow
 
-Model fetch flow (on settings dialog open):
-```
-ChatViewModel.showSettingsDialog()
-    └─► AnthropicApi.getModels()  →  GET /v1/models
-            └─► filters non-text models (image/audio/tts/etc.)
-            └─► _uiState.update { availableModels = ... }
-```
+New session
+    └─► AgentViewModel.newSession()
+            └─► LLMAgent.createSession()  → inserts SessionEntity with timestamp title
 
-Exchange rate flow (on app start):
-```
-ChatViewModel.init
-    └─► OkHttpClient  →  GET https://www.cbr-xml-daily.ru/daily_json.js
-            └─► parses Valute.USD.Value
-            └─► _uiState.update { usdToRub = ... }
+Context settings save
+    └─► AgentViewModel.saveSessionContext()
+            └─► LLMAgent.updateSessionContext()
+                    └─► sessionDao.updateContext()  (systemPrompt, model, temperature)
 ```
 
 ---
 
 ## 3. Core Logic
 
-### Message dispatch
+### Session management
 
-`ChatViewModel.sendMessage()` does the following in order:
+Each session is a `SessionEntity` row with:
+- `id` — UUID primary key
+- `startedAt` — Unix timestamp in ms
+- `title` — formatted start time ("dd MMM yyyy, HH:mm")
+- `systemPrompt` — injected as the first block of API instructions
+- `model` — model ID used for all messages in the session
+- `temperature` — passed to the API (omitted if 1.0)
 
-1. Appends the user message to all pane states and sets loading flags.
-2. Launches a coroutine for each pane (unrestricted + each profile) in parallel.
-3. Each coroutine calls either `sendDirect` or `sendWithPromptGeneration` depending on the profile's `generatePromptFirst` flag.
-4. The selected model for each pane is passed through the entire call chain down to `ChatRequest.model`.
+On every app start the most recent session is restored automatically. The session sidebar lists all sessions ordered newest-first; tapping one switches the active session and loads its message history live from the DB.
 
-### Send modes
+### Message persistence
 
-**`sendDirect`**
-- Reads current message history for the pane.
-- Calls `SendMessageUseCase` with `instructions`, `maxOutputTokens`, `temperature`, and `model`.
-- Appends the assistant response (with `MessageMeta`) to the pane; clears loading flag.
-
-**`sendWithPromptGeneration`** (two-step)
-1. Replaces the last user message with a meta-prompt: `"Create prompt for LLM model with next question: <original>"`.
-2. Sends the meta-prompt to the API → receives a generated prompt.
-3. Appends the generated prompt as both an assistant message and a new user message.
-4. Sends the generated prompt to the API → receives the final response (with `MessageMeta`).
-5. Appends the final response; clears loading flag.
+Every user message is written to the DB **before** the API call. The assistant response is written after a successful response. Both are stored in `MessageEntity` with the session FK, timestamp, and — for assistant messages — token counts, latency, and model.
 
 ### Instructions assembly (`buildInstructions`)
 
-Combines `responseFormatDescription` and a stop-sequence instruction into a single system instructions string. Either or both fields may be empty; `null` is passed if the result is blank.
+Called inside `LLMAgent.sendMessage()` before every request:
+
+1. If the session has a non-blank `systemPrompt`, it is the first block.
+2. `AgentMemory.toContextString()` appends all stored key-value memories as a bullet list under "Stored memories:".
+3. The two blocks are joined with a blank line. If both are empty, `null` is passed and no `instructions` field is sent.
+
+### Memory store
+
+`AgentMemory` wraps `SharedPreferences` as a flat key-value store shared across all sessions. Entries are displayed and managed in the context settings bottom sheet. Individual keys can be deleted; "Clear all" is available with a confirmation dialog.
 
 ### Response metadata (`MessageMeta`)
 
-Every assistant message carries a `MessageMeta` object:
+Every assistant message carries:
 
 | Field | Source |
 |---|---|
 | `inputTokens` | `usage.input_tokens` from API response |
 | `outputTokens` | `usage.output_tokens` from API response |
-| `durationMs` | Wall-clock time measured around the `api.sendMessage()` call |
-| `model` | Model ID used for the request |
+| `durationMs` | Wall-clock time around the API call |
+| `model` | Model ID from the session at send time |
 
 Displayed below each assistant bubble as:
 ```
-↑<input> ↓<output> · <total>tok · <duration> · $<usd> · ₽<rub>
+↑<input> ↓<output> · <total>tok · <duration> · <model>
 ```
 
-### Cost estimation
+### Context settings (per session)
 
-USD cost is calculated using per-model pricing (per 1M tokens):
+Accessible via the gear icon in the top bar. Stored in the `sessions` table:
 
-| Model | Input ($/1M) | Output ($/1M) |
-|---|---|---|
-| gpt-4o-mini | 0.15 | 0.60 |
-| gpt-4o | 2.50 | 10.00 |
-| gpt-4-turbo | 10.00 | 30.00 |
-| gpt-4 | 30.00 | 60.00 |
-| gpt-3.5 | 0.50 | 1.50 |
-| o1-mini | 1.10 | 4.40 |
-| o1 | 15.00 | 60.00 |
-| o3-mini | 1.10 | 4.40 |
-| o3 | 10.00 | 40.00 |
-
-RUB cost = USD cost × live USD/RUB rate fetched from CBR on app start (fallback: 90.0).
-
-### Model selection
-
-When the settings dialog opens, `GET /v1/models` is called and the returned list is filtered to remove non-text-generation models. Excluded if the model ID matches (case-insensitive):
-
-`image | audio | tts | transcribe | realtime | moderation | embedding | sora | whisper | dalle | search`
-
-The filtered, sorted list is shown as a dropdown in each profile card and in the unrestricted profile card.
-
-### Lesson 3 preset (`saveSettings`)
-
-When `Settings.createLesson3Chats == true`, `saveSettings` replaces the profile list with four fixed profiles before persisting:
-
-| # | Name | Key setting |
-|---|---|---|
-| 1 | Unrestricted | No system prompt, no restrictions |
-| 2 | Step by step | System prompt: "Solve this task step by step" |
-| 3 | Generate prompt first | `generatePromptFirst = true` |
-| 4 | Multi-role | System prompt with Analytic / Engineer / Critic roles |
-
-The flag is reset to `false` after application.
+| Setting | Options |
+|---|---|
+| System prompt | Free-form text, multi-line |
+| Model | gpt-4o-mini, gpt-4o, gpt-4-turbo, gpt-3.5-turbo, o1-mini, o3-mini |
+| Temperature | 0.0, 0.7, 1.0, 1.2 |
 
 ---
 
@@ -168,25 +137,21 @@ The flag is reset to `false` after application.
 | Architecture | MVVM + Clean Architecture (domain / data / presentation) |
 | Dependency injection | Koin |
 | Networking | Retrofit 2 + OkHttp 3 |
-| JSON serialization | Gson + `org.json.JSONObject` (for CBR rate parsing) |
+| JSON serialization | Gson |
 | Async | Kotlin Coroutines + `StateFlow` |
-| Persistence | `SharedPreferences` |
+| Local persistence | Room (sessions + messages) |
+| Memory store | `SharedPreferences` |
 | API backend | OpenAI-compatible proxy (`api.proxyapi.ru`) |
-| Exchange rate | CBR JSON feed (`cbr-xml-daily.ru/daily_json.js`) |
 
 ---
 
 ## 5. Limitations & Assumptions
 
 - **API key is hardcoded** in `AppModule.kt`. There is no secure storage or runtime configuration.
-- **Settings persistence is partial.** `SettingsRepositoryImpl` only saves and loads `profiles`. The fields `unrestrictedGeneratePromptFirst`, `unrestrictedTemperature`, `unrestrictedModel`, and `createLesson3Chats` are held in memory only and reset to defaults on every app restart.
-- **No message persistence.** All chat history is in-memory; restarting the app clears all messages.
-- **Pane identity is index-based.** When profiles are reordered or the list length changes, existing message history is matched by position, not by profile identity. Messages may shift to the wrong pane.
-- **Stop sequences are appended to instructions text**, not passed as a dedicated API parameter. Effectiveness depends on the model following the instruction.
-- **Max 4 restriction profiles** enforced only in the UI; the domain model has no hard limit.
-- **Single error snackbar** is shared across all panes. Concurrent errors from multiple panes overwrite each other.
+- **Memory is global**, not per-session. All sessions share the same `AgentMemory` store.
+- **No migration strategy beyond destructive.** The Room database uses `fallbackToDestructiveMigration()`; schema changes wipe existing data.
 - **Temperature options are fixed** to `[0.0, 0.7, 1.0, 1.2]`; free-form input is not supported.
-- **No retry logic.** Failed requests surface a snackbar and drop the response; the loading state is cleared.
-- **`generatePromptFirst` in two-step mode** reads pane state between step 1 and step 2 from `_uiState.value` directly, which is a snapshot that could be stale if concurrent updates occur.
-- **Cost estimates are approximations.** Prices are hardcoded and may drift from actual billing. The CBR rate is fetched once at startup and not refreshed during the session.
-- **Model list is fetched on every settings dialog open** but not cached across opens; a failed fetch leaves the dropdown empty (falls back to showing the currently saved model only).
+- **Model list is hardcoded** in the UI (`AVAILABLE_MODELS`); it is not fetched live from the API.
+- **No retry logic.** Failed requests surface a snackbar and drop the loading state; the user message remains in the DB.
+- **Single error snackbar** — only the most recent error is shown.
+- **`buildHistory` uses `.first()`** on the Flow, which reads the DB state at the moment of the call. Under very high concurrency this could miss a just-inserted message, but in practice the user message is inserted synchronously before `buildHistory` is called.

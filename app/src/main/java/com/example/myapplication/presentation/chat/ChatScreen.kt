@@ -63,7 +63,7 @@ import org.koin.androidx.compose.koinViewModel
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun ChatScreen(viewModel: ChatViewModel = koinViewModel()) {
+fun ChatScreen(modifier: Modifier = Modifier, viewModel: ChatViewModel = koinViewModel()) {
     val uiState by viewModel.uiState.collectAsState()
     val snackbarHostState = remember { SnackbarHostState() }
     var inputText by remember { mutableStateOf("") }
@@ -92,6 +92,7 @@ fun ChatScreen(viewModel: ChatViewModel = koinViewModel()) {
     }
 
     Scaffold(
+        modifier = modifier,
         topBar = {
             TopAppBar(
                 title = { Text("Claude Chat") },

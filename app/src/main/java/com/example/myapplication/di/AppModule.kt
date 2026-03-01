@@ -1,11 +1,15 @@
 package com.example.myapplication.di
 
+import com.example.myapplication.agent.AgentMemory
+import com.example.myapplication.agent.LLMAgent
 import com.example.myapplication.data.api.AnthropicApi
+import com.example.myapplication.data.db.AppDatabase
 import com.example.myapplication.data.repository.ChatRepositoryImpl
 import com.example.myapplication.data.repository.SettingsRepository
 import com.example.myapplication.data.repository.SettingsRepositoryImpl
 import com.example.myapplication.domain.repository.ChatRepository
 import com.example.myapplication.domain.usecase.SendMessageUseCase
+import com.example.myapplication.presentation.agent.AgentViewModel
 import com.example.myapplication.presentation.chat.ChatViewModel
 import okhttp3.OkHttpClient
 import okhttp3.logging.HttpLoggingInterceptor
@@ -56,5 +60,12 @@ val appModule = module {
 
     factory { SendMessageUseCase(get()) }
 
+    single { AppDatabase.create(androidContext()) }
+    single { get<AppDatabase>().sessionDao() }
+    single { get<AppDatabase>().messageDao() }
+    single { AgentMemory(androidContext()) }
+    single { LLMAgent(get(), get(), get(), get()) }
+
     viewModel { ChatViewModel(get(), get(), get(), get()) }
+    viewModel { AgentViewModel(get()) }
 }
