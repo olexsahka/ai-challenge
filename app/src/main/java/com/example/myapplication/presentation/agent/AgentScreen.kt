@@ -18,6 +18,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
@@ -68,6 +69,7 @@ import androidx.compose.ui.unit.dp
 import com.example.myapplication.agent.MemoryEntry
 import com.example.myapplication.data.db.entity.SessionEntity
 import com.example.myapplication.domain.model.Message
+import com.example.myapplication.domain.model.MessageMeta
 import org.koin.androidx.compose.koinViewModel
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -77,6 +79,7 @@ private val AVAILABLE_MODELS = listOf(
     "gpt-4o-mini", "gpt-4o", "gpt-4-turbo", "gpt-3.5-turbo", "o1-mini", "o3-mini"
 )
 private val TEMPERATURE_OPTIONS = listOf(0.0f, 0.7f, 1.0f, 1.2f)
+//Расскажи максимально подробно про историю авто и бензвионвых двигаетелей
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -121,6 +124,16 @@ fun AgentScreen(modifier: Modifier = Modifier, viewModel: AgentViewModel = koinV
                 ),
                 actions = {
                     if (uiState.activeSession != null) {
+                        TextButton(
+                            onClick = { viewModel.sendLargeTokenTest() },
+                            enabled = !uiState.isLoading
+                        ) {
+                            Text(
+                                "150K",
+                                color = MaterialTheme.colorScheme.onPrimary,
+                                style = MaterialTheme.typography.labelMedium
+                            )
+                        }
                         IconButton(onClick = { viewModel.showSettings() }) {
                             Icon(
                                 Icons.Filled.Settings,
@@ -177,6 +190,11 @@ fun AgentScreen(modifier: Modifier = Modifier, viewModel: AgentViewModel = koinV
                         isLoading = uiState.isLoading,
                         modifier = Modifier.weight(1f)
                     )
+                    val totalInput = messages.sumOf { it.meta?.inputTokens ?: 0 }
+                    val totalOutput = messages.sumOf { it.meta?.outputTokens ?: 0 }
+                    if (totalInput > 0 || totalOutput > 0) {
+                        TokenTotalsBar(totalInput = totalInput, totalOutput = totalOutput)
+                    }
                     MessageInput(
                         text = inputText,
                         onTextChange = { inputText = it },
@@ -406,7 +424,12 @@ private fun MessageList(
         verticalArrangement = Arrangement.spacedBy(8.dp)
     ) {
         item { Spacer(Modifier.height(8.dp)) }
-        items(messages, key = { it.id }) { MessageBubble(it) }
+        itemsIndexed(messages, key = { _, msg -> msg.id }) { index, message ->
+            val nextMeta = if (message.isFromUser)
+                messages.getOrNull(index + 1)?.meta
+            else null
+            MessageBubble(message = message, followingMeta = nextMeta)
+        }
         if (isLoading) {
             item {
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Start) {
@@ -428,7 +451,7 @@ private fun MessageList(
 }
 
 @Composable
-private fun MessageBubble(message: Message) {
+private fun MessageBubble(message: Message, followingMeta: MessageMeta? = null) {
     val isUser = message.isFromUser
     val bubbleColor = if (isUser) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceVariant
     val textColor = if (isUser) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant
@@ -456,18 +479,46 @@ private fun MessageBubble(message: Message) {
                     modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)
                 )
             }
-            message.meta?.let { meta ->
-                val total = meta.inputTokens + meta.outputTokens
-                val dur = if (meta.durationMs >= 1000) "${"%.1f".format(meta.durationMs / 1000.0)}s"
-                else "${meta.durationMs}ms"
-                Text(
-                    text = "↑${meta.inputTokens} ↓${meta.outputTokens} · ${total}tok · $dur · ${meta.model}",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f),
-                    modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp)
-                )
+            if (isUser) {
+                followingMeta?.let { meta ->
+                    Text(
+                        text = "↑${meta.inputTokens}tok",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f),
+                        modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp)
+                    )
+                }
+            } else {
+                message.meta?.let { meta ->
+                    val dur = if (meta.durationMs >= 1000) "${"%.1f".format(meta.durationMs / 1000.0)}s"
+                    else "${meta.durationMs}ms"
+                    Text(
+                        text = "↓${meta.outputTokens}tok · $dur · ${meta.model}",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f),
+                        modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp)
+                    )
+                }
             }
         }
+    }
+}
+
+@Composable
+private fun TokenTotalsBar(totalInput: Int, totalOutput: Int) {
+    val total = totalInput + totalOutput
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(MaterialTheme.colorScheme.secondaryContainer)
+            .padding(horizontal = 12.dp, vertical = 4.dp),
+        horizontalArrangement = Arrangement.End
+    ) {
+        Text(
+            text = "Dialogue: ↑$totalInput ↓$totalOutput · ${total}tok",
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSecondaryContainer.copy(alpha = 0.8f)
+        )
     }
 }
 

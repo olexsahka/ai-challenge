@@ -100,6 +100,24 @@ class AgentViewModel(private val agent: LLMAgent) : ViewModel() {
         refreshMemories()
     }
 
+    fun sendLargeTokenTest() {
+        val sessionId = _uiState.value.activeSession?.id ?: return
+        if (_uiState.value.isLoading) return
+        val chunk = "The quick brown fox jumps over the lazy dog. " // ~45 chars
+        // ~4 chars per token → 150000 tokens ≈ 600000 chars
+        val targetChars = 600_000
+        val repetitions = targetChars / chunk.length + 1
+        val largeText = chunk.repeat(repetitions) +
+                "\n\nThe above text is repeated filler. Please respond with exactly: OK"
+        _uiState.update { it.copy(isLoading = true, error = null) }
+        viewModelScope.launch {
+            agent.sendMessage(sessionId, largeText).onFailure { e ->
+                _uiState.update { it.copy(error = e.message ?: "Error") }
+            }
+            _uiState.update { it.copy(isLoading = false) }
+        }
+    }
+
     fun clearError() = _uiState.update { it.copy(error = null) }
 
     private fun activateSession(session: SessionEntity) {
