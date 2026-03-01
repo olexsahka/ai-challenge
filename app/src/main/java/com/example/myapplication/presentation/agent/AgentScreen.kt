@@ -46,6 +46,7 @@ import androidx.compose.material3.Snackbar
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
@@ -64,10 +65,12 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.example.myapplication.agent.MemoryEntry
 import com.example.myapplication.data.db.entity.SessionEntity
+import androidx.compose.material.icons.filled.KeyboardArrowDown
 import com.example.myapplication.domain.model.Message
 import com.example.myapplication.domain.model.MessageMeta
 import org.koin.androidx.compose.koinViewModel
@@ -102,7 +105,9 @@ fun AgentScreen(modifier: Modifier = Modifier, viewModel: AgentViewModel = koinV
             ContextSettingsSheet(
                 session = session,
                 memories = uiState.memories,
-                onSave = { prompt, model, temp -> viewModel.saveSessionContext(prompt, model, temp) },
+                onSave = { prompt, model, temp, compressionEnabled, compressionN, compressionM ->
+                    viewModel.saveSessionContext(prompt, model, temp, compressionEnabled, compressionN, compressionM)
+                },
                 onForgetMemory = { viewModel.forgetMemory(it) },
                 onForgetAll = { viewModel.forgetAllMemory() },
                 onDismiss = { viewModel.hideSettings() }
@@ -185,6 +190,10 @@ fun AgentScreen(modifier: Modifier = Modifier, viewModel: AgentViewModel = koinV
                         )
                     }
                 } else {
+                    val summary = uiState.activeSummary
+                    if (summary != null && uiState.activeSession?.compressionEnabled == true) {
+                        SummaryPinBanner(summary = summary.summary)
+                    }
                     MessageList(
                         messages = messages,
                         isLoading = uiState.isLoading,
@@ -217,7 +226,7 @@ fun AgentScreen(modifier: Modifier = Modifier, viewModel: AgentViewModel = koinV
 private fun ContextSettingsSheet(
     session: SessionEntity,
     memories: List<MemoryEntry>,
-    onSave: (systemPrompt: String, model: String, temperature: Float) -> Unit,
+    onSave: (systemPrompt: String, model: String, temperature: Float, compressionEnabled: Boolean, compressionN: Int, compressionM: Int) -> Unit,
     onForgetMemory: (String) -> Unit,
     onForgetAll: () -> Unit,
     onDismiss: () -> Unit
@@ -228,6 +237,9 @@ private fun ContextSettingsSheet(
     var modelExpanded by remember { mutableStateOf(false) }
     var tempExpanded by remember { mutableStateOf(false) }
     var confirmClearAll by remember { mutableStateOf(false) }
+    var compressionEnabled by rememberSaveable { mutableStateOf(session.compressionEnabled) }
+    var compressionNText by rememberSaveable { mutableStateOf(session.compressionN.toString()) }
+    var compressionMText by rememberSaveable { mutableStateOf(session.compressionM.toString()) }
 
     val sheetState = rememberModalBottomSheetState()
 
@@ -305,8 +317,49 @@ private fun ContextSettingsSheet(
                 }
             }
             item {
+                HorizontalDivider()
+                Spacer(Modifier.height(4.dp))
+                Row(
+                    Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text("Memory Compression", style = MaterialTheme.typography.bodyMedium)
+                    Switch(
+                        checked = compressionEnabled,
+                        onCheckedChange = { compressionEnabled = it }
+                    )
+                }
+            }
+            if (compressionEnabled) {
+                item {
+                    OutlinedTextField(
+                        value = compressionNText,
+                        onValueChange = { compressionNText = it.filter { c -> c.isDigit() } },
+                        label = { Text("Send last n messages") },
+                        modifier = Modifier.fillMaxWidth(),
+                        singleLine = true,
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number)
+                    )
+                }
+                item {
+                    OutlinedTextField(
+                        value = compressionMText,
+                        onValueChange = { compressionMText = it.filter { c -> c.isDigit() } },
+                        label = { Text("Update summary every m messages") },
+                        modifier = Modifier.fillMaxWidth(),
+                        singleLine = true,
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number)
+                    )
+                }
+            }
+            item {
                 Button(
-                    onClick = { onSave(systemPrompt, model, temperature) },
+                    onClick = {
+                        val n = compressionNText.toIntOrNull()?.coerceAtLeast(1) ?: 5
+                        val m = compressionMText.toIntOrNull()?.coerceAtLeast(1) ?: 6
+                        onSave(systemPrompt, model, temperature, compressionEnabled, n, m)
+                    },
                     modifier = Modifier.fillMaxWidth()
                 ) { Text("Save") }
             }
@@ -557,5 +610,65 @@ private fun MessageInput(
                 tint = if (text.isNotBlank() && !isLoading) MaterialTheme.colorScheme.primary else Color.Gray
             )
         }
+    }
+}
+
+@Composable
+private fun SummaryPinBanner(summary: String) {
+    var expanded by remember { mutableStateOf(false) }
+    val firstSentence = remember(summary) {
+        summary.split(Regex("(?<=[.!?])\\s+")).firstOrNull()?.trim() ?: summary
+    }
+
+    Surface(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable { expanded = true },
+        color = MaterialTheme.colorScheme.tertiaryContainer,
+        tonalElevation = 2.dp
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 12.dp, vertical = 6.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = "Summary",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onTertiaryContainer.copy(alpha = 0.7f)
+                )
+                Text(
+                    text = firstSentence,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onTertiaryContainer,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+            Icon(
+                imageVector = Icons.Filled.KeyboardArrowDown,
+                contentDescription = "Expand summary",
+                tint = MaterialTheme.colorScheme.onTertiaryContainer.copy(alpha = 0.7f),
+                modifier = Modifier.size(18.dp)
+            )
+        }
+    }
+
+    if (expanded) {
+        AlertDialog(
+            onDismissRequest = { expanded = false },
+            title = { Text("Conversation Summary") },
+            text = {
+                Text(
+                    text = summary,
+                    style = MaterialTheme.typography.bodyMedium
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = { expanded = false }) { Text("Close") }
+            }
+        )
     }
 }

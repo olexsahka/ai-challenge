@@ -5,8 +5,10 @@ import com.example.myapplication.data.api.model.ChatRequest
 import com.example.myapplication.data.api.model.InputMessage
 import com.example.myapplication.data.db.dao.MessageDao
 import com.example.myapplication.data.db.dao.SessionDao
+import com.example.myapplication.data.db.dao.SummaryDao
 import com.example.myapplication.data.db.entity.MessageEntity
 import com.example.myapplication.data.db.entity.SessionEntity
+import com.example.myapplication.data.db.entity.SummaryEntity
 import com.example.myapplication.domain.model.Message
 import com.example.myapplication.domain.model.MessageMeta
 import kotlinx.coroutines.flow.Flow
@@ -21,7 +23,8 @@ class LLMAgent(
     private val api: AnthropicApi,
     private val sessionDao: SessionDao,
     private val messageDao: MessageDao,
-    private val memory: AgentMemory
+    private val memory: AgentMemory,
+    private val summaryDao: SummaryDao
 ) {
     private val titleFormat = SimpleDateFormat("dd MMM yyyy, HH:mm", Locale.getDefault())
 
@@ -63,12 +66,18 @@ class LLMAgent(
         sessionId: String,
         systemPrompt: String,
         model: String,
-        temperature: Float
+        temperature: Float,
+        compressionEnabled: Boolean,
+        compressionN: Int,
+        compressionM: Int
     ) {
-        sessionDao.updateContext(sessionId, systemPrompt, model, temperature)
+        sessionDao.updateContext(sessionId, systemPrompt, model, temperature, compressionEnabled, compressionN, compressionM)
     }
 
     suspend fun getSession(sessionId: String): SessionEntity? = sessionDao.getById(sessionId)
+
+    fun observeSummary(sessionId: String): Flow<com.example.myapplication.data.db.entity.SummaryEntity?> =
+        summaryDao.observeBySession(sessionId)
 
     fun getMemories(): List<MemoryEntry> = memory.recallAll()
 
@@ -91,7 +100,7 @@ class LLMAgent(
 
         return try {
             val instructions = buildInstructions(session)
-            val history = buildHistory(sessionId)
+            val history = buildHistory(session)
             val request = ChatRequest(
                 model = session.model,
                 instructions = instructions.takeIf { it.isNotBlank() },
@@ -148,12 +157,61 @@ class LLMAgent(
         return parts.joinToString("\n\n")
     }
 
-    private suspend fun buildHistory(sessionId: String): List<InputMessage> {
-        return messageDao.observeBySession(sessionId).first().map { e ->
-            InputMessage(
-                role = if (e.isFromUser) "user" else "assistant",
-                content = e.content
-            )
+    private suspend fun buildHistory(session: SessionEntity): List<InputMessage> {
+        val all = messageDao.observeBySession(session.id).first()
+        if (!session.compressionEnabled || all.size <= session.compressionN) {
+            return all.map { e ->
+                InputMessage(role = if (e.isFromUser) "user" else "assistant", content = e.content)
+            }
         }
+
+        val recent = all.takeLast(session.compressionN)
+        val older = all.dropLast(session.compressionN)
+
+        val summary = getOrUpdateSummary(session, older)
+
+        val result = mutableListOf<InputMessage>()
+        result.add(InputMessage(role = "user", content = "[Summary of earlier conversation]\n$summary"))
+        result.add(InputMessage(role = "assistant", content = "Understood, I have the context from the earlier conversation."))
+        result.addAll(recent.map { e ->
+            InputMessage(role = if (e.isFromUser) "user" else "assistant", content = e.content)
+        })
+        return result
+    }
+
+    private suspend fun getOrUpdateSummary(session: SessionEntity, olderMessages: List<MessageEntity>): String {
+        val olderCount = olderMessages.size
+        val existing = summaryDao.getBySession(session.id)
+
+        if (existing != null && olderCount - existing.coveredMessageCount < session.compressionM) {
+            return existing.summary
+        }
+
+        val historyText = olderMessages.joinToString("\n") { e ->
+            val role = if (e.isFromUser) "User" else "Assistant"
+            "$role: ${e.content}"
+        }
+        val summaryRequest = ChatRequest(
+            model = session.model,
+            instructions = "You are a conversation summarizer. Produce a concise summary of the conversation provided, capturing key facts, decisions, and context. Reply with only the summary text.",
+            input = listOf(InputMessage(role = "user", content = "Summarize this conversation:\n\n$historyText")),
+            temperature = null
+        )
+        val response = api.sendMessage(summaryRequest)
+        val summary = response.output
+            .firstOrNull { it.type == "message" }
+            ?.content
+            ?.firstOrNull { it.type == "output_text" }
+            ?.text
+            ?: "No summary available."
+
+        summaryDao.upsert(
+            SummaryEntity(
+                sessionId = session.id,
+                summary = summary,
+                coveredMessageCount = olderCount
+            )
+        )
+        return summary
     }
 }

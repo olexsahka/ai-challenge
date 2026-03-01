@@ -5,6 +5,7 @@ import androidx.lifecycle.viewModelScope
 import com.example.myapplication.agent.LLMAgent
 import com.example.myapplication.agent.MemoryEntry
 import com.example.myapplication.data.db.entity.SessionEntity
+import com.example.myapplication.data.db.entity.SummaryEntity
 import com.example.myapplication.domain.model.Message
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -16,6 +17,7 @@ import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.Job
 
 data class AgentUiState(
     val sessions: List<SessionEntity> = emptyList(),
@@ -23,7 +25,8 @@ data class AgentUiState(
     val isLoading: Boolean = false,
     val error: String? = null,
     val memories: List<MemoryEntry> = emptyList(),
-    val showSettings: Boolean = false
+    val showSettings: Boolean = false,
+    val activeSummary: SummaryEntity? = null
 )
 
 class AgentViewModel(private val agent: LLMAgent) : ViewModel() {
@@ -32,6 +35,7 @@ class AgentViewModel(private val agent: LLMAgent) : ViewModel() {
     val uiState: StateFlow<AgentUiState> = _uiState.asStateFlow()
 
     private val _activeSessionId = MutableStateFlow<String?>(null)
+    private var summaryJob: Job? = null
 
     @OptIn(ExperimentalCoroutinesApi::class)
     val messages: StateFlow<List<Message>> = _activeSessionId
@@ -81,10 +85,17 @@ class AgentViewModel(private val agent: LLMAgent) : ViewModel() {
     fun showSettings() = _uiState.update { it.copy(showSettings = true) }
     fun hideSettings() = _uiState.update { it.copy(showSettings = false) }
 
-    fun saveSessionContext(systemPrompt: String, model: String, temperature: Float) {
+    fun saveSessionContext(
+        systemPrompt: String,
+        model: String,
+        temperature: Float,
+        compressionEnabled: Boolean,
+        compressionN: Int,
+        compressionM: Int
+    ) {
         val sessionId = _uiState.value.activeSession?.id ?: return
         viewModelScope.launch {
-            agent.updateSessionContext(sessionId, systemPrompt, model, temperature)
+            agent.updateSessionContext(sessionId, systemPrompt, model, temperature, compressionEnabled, compressionN, compressionM)
             val updated = agent.getSession(sessionId)
             if (updated != null) _uiState.update { it.copy(activeSession = updated, showSettings = false) }
         }
@@ -122,7 +133,13 @@ class AgentViewModel(private val agent: LLMAgent) : ViewModel() {
 
     private fun activateSession(session: SessionEntity) {
         _activeSessionId.value = session.id
-        _uiState.update { it.copy(activeSession = session) }
+        _uiState.update { it.copy(activeSession = session, activeSummary = null) }
+        summaryJob?.cancel()
+        summaryJob = viewModelScope.launch {
+            agent.observeSummary(session.id).collect { summary ->
+                _uiState.update { it.copy(activeSummary = summary) }
+            }
+        }
     }
 
     private fun refreshMemories() {

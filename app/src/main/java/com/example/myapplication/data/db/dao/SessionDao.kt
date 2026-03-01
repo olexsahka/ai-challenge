@@ -21,6 +21,6 @@ interface SessionDao {
     @Query("SELECT * FROM sessions WHERE id = :id")
     suspend fun getById(id: String): SessionEntity?
 
-    @Query("UPDATE sessions SET systemPrompt = :systemPrompt, model = :model, temperature = :temperature WHERE id = :id")
-    suspend fun updateContext(id: String, systemPrompt: String, model: String, temperature: Float)
+    @Query("UPDATE sessions SET systemPrompt = :systemPrompt, model = :model, temperature = :temperature, compressionEnabled = :compressionEnabled, compressionN = :compressionN, compressionM = :compressionM WHERE id = :id")
+    suspend fun updateContext(id: String, systemPrompt: String, model: String, temperature: Float, compressionEnabled: Boolean, compressionN: Int, compressionM: Int)
 }
