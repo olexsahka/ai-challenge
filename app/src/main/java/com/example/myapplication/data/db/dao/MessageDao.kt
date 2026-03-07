@@ -14,4 +14,10 @@ interface MessageDao {
 
     @Query("SELECT * FROM messages WHERE sessionId = :sessionId ORDER BY createdAt ASC")
     fun observeBySession(sessionId: String): Flow<List<MessageEntity>>
+
+    @Query("SELECT * FROM messages WHERE branchNodeId = :nodeId ORDER BY createdAt ASC")
+    fun observeByNode(nodeId: String): Flow<List<MessageEntity>>
+
+    @Query("SELECT * FROM messages WHERE branchNodeId = :nodeId ORDER BY createdAt ASC")
+    suspend fun getByNode(nodeId: String): List<MessageEntity>
 }

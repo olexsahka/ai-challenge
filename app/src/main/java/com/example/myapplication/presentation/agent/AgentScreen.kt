@@ -46,7 +46,6 @@ import androidx.compose.material3.Snackbar
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Surface
-import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
@@ -69,8 +68,13 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.example.myapplication.agent.MemoryEntry
+import com.example.myapplication.data.db.entity.BranchNodeEntity
+import com.example.myapplication.data.db.entity.FactEntity
+import com.example.myapplication.data.db.entity.MemoryStrategy
 import com.example.myapplication.data.db.entity.SessionEntity
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material3.RadioButton
 import com.example.myapplication.domain.model.Message
 import com.example.myapplication.domain.model.MessageMeta
 import org.koin.androidx.compose.koinViewModel
@@ -105,8 +109,8 @@ fun AgentScreen(modifier: Modifier = Modifier, viewModel: AgentViewModel = koinV
             ContextSettingsSheet(
                 session = session,
                 memories = uiState.memories,
-                onSave = { prompt, model, temp, compressionEnabled, compressionN, compressionM ->
-                    viewModel.saveSessionContext(prompt, model, temp, compressionEnabled, compressionN, compressionM)
+                onSave = { prompt, model, temp, compressionEnabled, compressionN, compressionM, memoryStrategy, slidingWindowN, stickyFactsN ->
+                    viewModel.saveSessionContext(prompt, model, temp, compressionEnabled, compressionN, compressionM, memoryStrategy, slidingWindowN, stickyFactsN)
                 },
                 onForgetMemory = { viewModel.forgetMemory(it) },
                 onForgetAll = { viewModel.forgetAllMemory() },
@@ -167,14 +171,31 @@ fun AgentScreen(modifier: Modifier = Modifier, viewModel: AgentViewModel = koinV
                 .padding(padding)
                 .imePadding()
         ) {
-            SessionSidebar(
-                sessions = uiState.sessions,
-                activeSessionId = uiState.activeSession?.id,
-                onSelect = { viewModel.selectSession(it) },
-                modifier = Modifier
-                    .width(110.dp)
-                    .fillMaxHeight()
-            )
+            val isBranching = uiState.activeSession?.memoryStrategy == MemoryStrategy.BRANCHING.name
+            if (isBranching) {
+                BranchSidebar(
+                    sessions = uiState.sessions,
+                    activeSessionId = uiState.activeSession?.id,
+                    onSelectSession = { viewModel.selectSession(it) },
+                    nodes = uiState.branchNodes,
+                    activeNodeId = uiState.activeNodeId,
+                    onSelectNode = { viewModel.selectBranchNode(it) },
+                    onForkNode = { viewModel.forkCurrentNode() },
+                    onRenameNode = { id, label -> viewModel.renameNode(id, label) },
+                    modifier = Modifier
+                        .width(140.dp)
+                        .fillMaxHeight()
+                )
+            } else {
+                SessionSidebar(
+                    sessions = uiState.sessions,
+                    activeSessionId = uiState.activeSession?.id,
+                    onSelect = { viewModel.selectSession(it) },
+                    modifier = Modifier
+                        .width(110.dp)
+                        .fillMaxHeight()
+                )
+            }
 
             VerticalDivider(modifier = Modifier.fillMaxHeight())
 
@@ -190,9 +211,13 @@ fun AgentScreen(modifier: Modifier = Modifier, viewModel: AgentViewModel = koinV
                         )
                     }
                 } else {
+                    val activeStrategy = uiState.activeSession?.memoryStrategy
                     val summary = uiState.activeSummary
-                    if (summary != null && uiState.activeSession?.compressionEnabled == true) {
+                    if (summary != null && activeStrategy == MemoryStrategy.COMPRESSION.name) {
                         SummaryPinBanner(summary = summary.summary)
+                    }
+                    if (uiState.activeFacts.isNotEmpty() && activeStrategy == MemoryStrategy.STICKY_FACTS.name) {
+                        FactsPinBanner(facts = uiState.activeFacts)
                     }
                     MessageList(
                         messages = messages,
@@ -226,7 +251,7 @@ fun AgentScreen(modifier: Modifier = Modifier, viewModel: AgentViewModel = koinV
 private fun ContextSettingsSheet(
     session: SessionEntity,
     memories: List<MemoryEntry>,
-    onSave: (systemPrompt: String, model: String, temperature: Float, compressionEnabled: Boolean, compressionN: Int, compressionM: Int) -> Unit,
+    onSave: (systemPrompt: String, model: String, temperature: Float, compressionEnabled: Boolean, compressionN: Int, compressionM: Int, memoryStrategy: String, slidingWindowN: Int, stickyFactsN: Int) -> Unit,
     onForgetMemory: (String) -> Unit,
     onForgetAll: () -> Unit,
     onDismiss: () -> Unit
@@ -237,9 +262,11 @@ private fun ContextSettingsSheet(
     var modelExpanded by remember { mutableStateOf(false) }
     var tempExpanded by remember { mutableStateOf(false) }
     var confirmClearAll by remember { mutableStateOf(false) }
-    var compressionEnabled by rememberSaveable { mutableStateOf(session.compressionEnabled) }
     var compressionNText by rememberSaveable { mutableStateOf(session.compressionN.toString()) }
     var compressionMText by rememberSaveable { mutableStateOf(session.compressionM.toString()) }
+    var selectedStrategy by rememberSaveable { mutableStateOf(session.memoryStrategy) }
+    var slidingWindowNText by rememberSaveable { mutableStateOf(session.slidingWindowN.toString()) }
+    var stickyFactsNText by rememberSaveable { mutableStateOf(session.stickyFactsN.toString()) }
 
     val sheetState = rememberModalBottomSheetState()
 
@@ -319,19 +346,56 @@ private fun ContextSettingsSheet(
             item {
                 HorizontalDivider()
                 Spacer(Modifier.height(4.dp))
-                Row(
-                    Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text("Memory Compression", style = MaterialTheme.typography.bodyMedium)
-                    Switch(
-                        checked = compressionEnabled,
-                        onCheckedChange = { compressionEnabled = it }
+                Text("Memory Strategy", style = MaterialTheme.typography.titleSmall)
+                Spacer(Modifier.height(4.dp))
+                val strategyLabels = listOf(
+                    MemoryStrategy.FULL.name to "Full History",
+                    MemoryStrategy.SLIDING_WINDOW.name to "Sliding Window",
+                    MemoryStrategy.COMPRESSION.name to "Memory Compression",
+                    MemoryStrategy.STICKY_FACTS.name to "Sticky Facts / Key-Value",
+                    MemoryStrategy.BRANCHING.name to "Branching"
+                )
+                strategyLabels.forEach { (name, label) ->
+                    Row(
+                        Modifier
+                            .fillMaxWidth()
+                            .clickable { selectedStrategy = name }
+                            .padding(vertical = 2.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        RadioButton(
+                            selected = selectedStrategy == name,
+                            onClick = { selectedStrategy = name }
+                        )
+                        Text(label, style = MaterialTheme.typography.bodyMedium)
+                    }
+                }
+            }
+            if (selectedStrategy == MemoryStrategy.SLIDING_WINDOW.name) {
+                item {
+                    OutlinedTextField(
+                        value = slidingWindowNText,
+                        onValueChange = { slidingWindowNText = it.filter { c -> c.isDigit() } },
+                        label = { Text("Send last n messages") },
+                        modifier = Modifier.fillMaxWidth(),
+                        singleLine = true,
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number)
                     )
                 }
             }
-            if (compressionEnabled) {
+            if (selectedStrategy == MemoryStrategy.STICKY_FACTS.name) {
+                item {
+                    OutlinedTextField(
+                        value = stickyFactsNText,
+                        onValueChange = { stickyFactsNText = it.filter { c -> c.isDigit() } },
+                        label = { Text("Send last n messages") },
+                        modifier = Modifier.fillMaxWidth(),
+                        singleLine = true,
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number)
+                    )
+                }
+            }
+            if (selectedStrategy == MemoryStrategy.COMPRESSION.name) {
                 item {
                     OutlinedTextField(
                         value = compressionNText,
@@ -358,7 +422,10 @@ private fun ContextSettingsSheet(
                     onClick = {
                         val n = compressionNText.toIntOrNull()?.coerceAtLeast(1) ?: 5
                         val m = compressionMText.toIntOrNull()?.coerceAtLeast(1) ?: 6
-                        onSave(systemPrompt, model, temperature, compressionEnabled, n, m)
+                        val swN = slidingWindowNText.toIntOrNull()?.coerceAtLeast(1) ?: 5
+                        val compressionActive = selectedStrategy == MemoryStrategy.COMPRESSION.name
+                        val sfN = stickyFactsNText.toIntOrNull()?.coerceAtLeast(1) ?: 5
+                        onSave(systemPrompt, model, temperature, compressionActive, n, m, selectedStrategy, swN, sfN)
                     },
                     modifier = Modifier.fillMaxWidth()
                 ) { Text("Save") }
@@ -458,6 +525,155 @@ private fun SessionSidebar(
                 )
             }
         }
+    }
+}
+
+@Composable
+private fun BranchSidebar(
+    sessions: List<SessionEntity>,
+    activeSessionId: String?,
+    onSelectSession: (SessionEntity) -> Unit,
+    nodes: List<BranchNodeEntity>,
+    activeNodeId: String?,
+    onSelectNode: (BranchNodeEntity) -> Unit,
+    onForkNode: () -> Unit,
+    onRenameNode: (String, String) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val fmt = remember { SimpleDateFormat("dd MMM\nHH:mm", Locale.getDefault()) }
+    var renamingNodeId by remember { mutableStateOf<String?>(null) }
+    var renameText by remember { mutableStateOf("") }
+
+    // Build depth map for indentation
+    val nodeMap = remember(nodes) { nodes.associateBy { it.id } }
+    fun depth(nodeId: String): Int {
+        var d = 0; var cur: String? = nodeMap[nodeId]?.parentId
+        while (cur != null) { d++; cur = nodeMap[cur]?.parentId }
+        return d
+    }
+
+    Column(modifier = modifier) {
+        Text(
+            text = "Sessions",
+            style = MaterialTheme.typography.labelSmall,
+            modifier = Modifier
+                .fillMaxWidth()
+                .background(MaterialTheme.colorScheme.secondaryContainer)
+                .padding(6.dp)
+        )
+        LazyColumn(modifier = Modifier.weight(1f)) {
+            items(sessions, key = { it.id }) { session ->
+                val isActive = session.id == activeSessionId
+                Text(
+                    text = fmt.format(Date(session.startedAt)),
+                    style = MaterialTheme.typography.bodySmall,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                    color = if (isActive) MaterialTheme.colorScheme.primary
+                    else MaterialTheme.colorScheme.onSurface,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { onSelectSession(session) }
+                        .background(
+                            if (isActive) MaterialTheme.colorScheme.primaryContainer
+                            else Color.Transparent
+                        )
+                        .padding(6.dp)
+                )
+            }
+
+            if (nodes.isNotEmpty()) {
+                item {
+                    HorizontalDivider()
+                    Text(
+                        text = "Branches",
+                        style = MaterialTheme.typography.labelSmall,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .background(MaterialTheme.colorScheme.tertiaryContainer)
+                            .padding(6.dp)
+                    )
+                }
+                items(nodes, key = { it.id }) { node ->
+                    val isActiveNode = node.id == activeNodeId
+                    val d = depth(node.id)
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .background(
+                                if (isActiveNode) MaterialTheme.colorScheme.primaryContainer
+                                else Color.Transparent
+                            )
+                            .clickable { onSelectNode(node) }
+                            .padding(start = (6 + d * 10).dp, top = 4.dp, bottom = 4.dp, end = 2.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        // Tree connector line indicator
+                        if (d > 0) {
+                            Text(
+                                text = "└ ",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
+                            )
+                        }
+                        Text(
+                            text = node.label,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = if (isActiveNode) MaterialTheme.colorScheme.primary
+                            else MaterialTheme.colorScheme.onSurface,
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.weight(1f)
+                        )
+                        IconButton(
+                            onClick = { renameText = node.label; renamingNodeId = node.id },
+                            modifier = Modifier.size(20.dp)
+                        ) {
+                            Icon(
+                                Icons.Filled.Edit,
+                                contentDescription = "Rename",
+                                modifier = Modifier.size(12.dp),
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)
+                            )
+                        }
+                    }
+                }
+                item {
+                    TextButton(
+                        onClick = onForkNode,
+                        modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp)
+                    ) {
+                        Icon(Icons.Filled.Add, contentDescription = null, modifier = Modifier.size(14.dp))
+                        Spacer(Modifier.width(4.dp))
+                        Text("Fork", style = MaterialTheme.typography.labelSmall)
+                    }
+                }
+            }
+        }
+    }
+
+    if (renamingNodeId != null) {
+        AlertDialog(
+            onDismissRequest = { renamingNodeId = null },
+            title = { Text("Rename node") },
+            text = {
+                OutlinedTextField(
+                    value = renameText,
+                    onValueChange = { renameText = it },
+                    singleLine = true,
+                    label = { Text("Label") }
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    renamingNodeId?.let { onRenameNode(it, renameText) }
+                    renamingNodeId = null
+                }) { Text("Save") }
+            },
+            dismissButton = {
+                TextButton(onClick = { renamingNodeId = null }) { Text("Cancel") }
+            }
+        )
     }
 }
 
@@ -665,6 +881,77 @@ private fun SummaryPinBanner(summary: String) {
                     text = summary,
                     style = MaterialTheme.typography.bodyMedium
                 )
+            },
+            confirmButton = {
+                TextButton(onClick = { expanded = false }) { Text("Close") }
+            }
+        )
+    }
+}
+
+@Composable
+private fun FactsPinBanner(facts: List<FactEntity>) {
+    var expanded by remember { mutableStateOf(false) }
+    val preview = remember(facts) {
+        facts.firstOrNull()?.let { "${it.factKey}: ${it.factValue}" } ?: ""
+    }
+
+    Surface(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable { expanded = true },
+        color = MaterialTheme.colorScheme.secondaryContainer,
+        tonalElevation = 2.dp
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 12.dp, vertical = 6.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = "Facts (${facts.size})",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSecondaryContainer.copy(alpha = 0.7f)
+                )
+                Text(
+                    text = preview,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSecondaryContainer,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+            Icon(
+                imageVector = Icons.Filled.KeyboardArrowDown,
+                contentDescription = "Expand facts",
+                tint = MaterialTheme.colorScheme.onSecondaryContainer.copy(alpha = 0.7f),
+                modifier = Modifier.size(18.dp)
+            )
+        }
+    }
+
+    if (expanded) {
+        AlertDialog(
+            onDismissRequest = { expanded = false },
+            title = { Text("Stored Facts") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    facts.forEach { fact ->
+                        Column {
+                            Text(
+                                text = fact.factKey,
+                                style = MaterialTheme.typography.labelMedium,
+                                color = MaterialTheme.colorScheme.primary
+                            )
+                            Text(
+                                text = fact.factValue,
+                                style = MaterialTheme.typography.bodyMedium
+                            )
+                        }
+                    }
+                }
             },
             confirmButton = {
                 TextButton(onClick = { expanded = false }) { Text("Close") }

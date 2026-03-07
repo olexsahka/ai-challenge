@@ -4,6 +4,9 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.myapplication.agent.LLMAgent
 import com.example.myapplication.agent.MemoryEntry
+import com.example.myapplication.data.db.entity.BranchNodeEntity
+import com.example.myapplication.data.db.entity.FactEntity
+import com.example.myapplication.data.db.entity.MemoryStrategy
 import com.example.myapplication.data.db.entity.SessionEntity
 import com.example.myapplication.data.db.entity.SummaryEntity
 import com.example.myapplication.domain.model.Message
@@ -12,6 +15,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.stateIn
@@ -26,7 +30,10 @@ data class AgentUiState(
     val error: String? = null,
     val memories: List<MemoryEntry> = emptyList(),
     val showSettings: Boolean = false,
-    val activeSummary: SummaryEntity? = null
+    val activeSummary: SummaryEntity? = null,
+    val activeFacts: List<FactEntity> = emptyList(),
+    val branchNodes: List<BranchNodeEntity> = emptyList(),
+    val activeNodeId: String? = null
 )
 
 class AgentViewModel(private val agent: LLMAgent) : ViewModel() {
@@ -36,14 +43,21 @@ class AgentViewModel(private val agent: LLMAgent) : ViewModel() {
 
     private val _activeSessionId = MutableStateFlow<String?>(null)
     private var summaryJob: Job? = null
+    private var factsJob: Job? = null
+    private var branchJob: Job? = null
+
+    private val _activeNodeId = MutableStateFlow<String?>(null)
 
     @OptIn(ExperimentalCoroutinesApi::class)
-    val messages: StateFlow<List<Message>> = _activeSessionId
-        .flatMapLatest { sessionId ->
-            if (sessionId == null) flowOf(emptyList())
-            else agent.observeMessages(sessionId)
+    val messages: StateFlow<List<Message>> = combine(_activeSessionId, _activeNodeId) { sessionId, nodeId ->
+        sessionId to nodeId
+    }.flatMapLatest { (sessionId, nodeId) ->
+        when {
+            sessionId == null -> flowOf(emptyList())
+            nodeId != null -> agent.observeNodeMessages(sessionId, nodeId)
+            else -> agent.observeMessages(sessionId)
         }
-        .stateIn(viewModelScope, SharingStarted.Lazily, emptyList())
+    }.stateIn(viewModelScope, SharingStarted.Lazily, emptyList())
 
     init {
         viewModelScope.launch {
@@ -74,12 +88,39 @@ class AgentViewModel(private val agent: LLMAgent) : ViewModel() {
         if (text.isBlank() || _uiState.value.isLoading) return
         _uiState.update { it.copy(isLoading = true, error = null) }
         viewModelScope.launch {
-            agent.sendMessage(sessionId, text).onFailure { e ->
-                _uiState.update { it.copy(error = e.message ?: "Error") }
+            val strategy = _uiState.value.activeSession?.memoryStrategy
+            val nodeId = _uiState.value.activeNodeId
+            if (strategy == MemoryStrategy.BRANCHING.name && nodeId != null) {
+                agent.sendMessageToNode(sessionId, nodeId, text).onFailure { e ->
+                    _uiState.update { it.copy(error = e.message ?: "Error") }
+                }
+            } else {
+                agent.sendMessage(sessionId, text).onFailure { e ->
+                    _uiState.update { it.copy(error = e.message ?: "Error") }
+                }
             }
             _uiState.update { it.copy(isLoading = false) }
             refreshMemories()
         }
+    }
+
+    fun forkCurrentNode(label: String = "") {
+        val sessionId = _uiState.value.activeSession?.id ?: return
+        val nodeId = _uiState.value.activeNodeId ?: return
+        viewModelScope.launch {
+            val newNode = agent.forkNode(sessionId, nodeId, label)
+            _activeNodeId.value = newNode.id
+            _uiState.update { it.copy(activeNodeId = newNode.id) }
+        }
+    }
+
+    fun selectBranchNode(node: BranchNodeEntity) {
+        _activeNodeId.value = node.id
+        _uiState.update { it.copy(activeNodeId = node.id) }
+    }
+
+    fun renameNode(nodeId: String, label: String) {
+        viewModelScope.launch { agent.renameNode(nodeId, label) }
     }
 
     fun showSettings() = _uiState.update { it.copy(showSettings = true) }
@@ -91,13 +132,23 @@ class AgentViewModel(private val agent: LLMAgent) : ViewModel() {
         temperature: Float,
         compressionEnabled: Boolean,
         compressionN: Int,
-        compressionM: Int
+        compressionM: Int,
+        memoryStrategy: String,
+        slidingWindowN: Int,
+        stickyFactsN: Int
     ) {
         val sessionId = _uiState.value.activeSession?.id ?: return
         viewModelScope.launch {
-            agent.updateSessionContext(sessionId, systemPrompt, model, temperature, compressionEnabled, compressionN, compressionM)
+            agent.updateSessionContext(sessionId, systemPrompt, model, temperature, compressionEnabled, compressionN, compressionM, memoryStrategy, slidingWindowN, stickyFactsN)
             val updated = agent.getSession(sessionId)
-            if (updated != null) _uiState.update { it.copy(activeSession = updated, showSettings = false) }
+            if (updated != null) {
+                _uiState.update { it.copy(activeSession = updated, showSettings = false) }
+                if (memoryStrategy == MemoryStrategy.BRANCHING.name && _uiState.value.activeNodeId == null) {
+                    val root = agent.getOrCreateRootNode(sessionId)
+                    _activeNodeId.value = root.id
+                    _uiState.update { it.copy(activeNodeId = root.id) }
+                }
+            }
         }
     }
 
@@ -133,11 +184,31 @@ class AgentViewModel(private val agent: LLMAgent) : ViewModel() {
 
     private fun activateSession(session: SessionEntity) {
         _activeSessionId.value = session.id
-        _uiState.update { it.copy(activeSession = session, activeSummary = null) }
+        _activeNodeId.value = null
+        _uiState.update { it.copy(activeSession = session, activeSummary = null, activeFacts = emptyList(), branchNodes = emptyList(), activeNodeId = null) }
         summaryJob?.cancel()
         summaryJob = viewModelScope.launch {
             agent.observeSummary(session.id).collect { summary ->
                 _uiState.update { it.copy(activeSummary = summary) }
+            }
+        }
+        factsJob?.cancel()
+        factsJob = viewModelScope.launch {
+            agent.observeFacts(session.id).collect { facts ->
+                _uiState.update { it.copy(activeFacts = facts) }
+            }
+        }
+        branchJob?.cancel()
+        branchJob = viewModelScope.launch {
+            agent.observeBranchNodes(session.id).collect { nodes ->
+                _uiState.update { it.copy(branchNodes = nodes) }
+            }
+        }
+        if (session.memoryStrategy == MemoryStrategy.BRANCHING.name) {
+            viewModelScope.launch {
+                val root = agent.getOrCreateRootNode(session.id)
+                _activeNodeId.value = root.id
+                _uiState.update { it.copy(activeNodeId = root.id) }
             }
         }
     }

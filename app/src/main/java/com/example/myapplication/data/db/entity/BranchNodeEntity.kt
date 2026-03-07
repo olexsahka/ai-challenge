@@ -6,7 +6,7 @@ import androidx.room.Index
 import androidx.room.PrimaryKey
 
 @Entity(
-    tableName = "messages",
+    tableName = "branch_nodes",
     foreignKeys = [
         ForeignKey(
             entity = SessionEntity::class,
@@ -15,17 +15,12 @@ import androidx.room.PrimaryKey
             onDelete = ForeignKey.CASCADE
         )
     ],
-    indices = [Index("sessionId")]
+    indices = [Index("sessionId"), Index("parentId")]
 )
-data class MessageEntity(
+data class BranchNodeEntity(
     @PrimaryKey val id: String,
     val sessionId: String,
-    val content: String,
-    val isFromUser: Boolean,
-    val createdAt: Long,
-    val inputTokens: Int = 0,
-    val outputTokens: Int = 0,
-    val durationMs: Long = 0,
-    val model: String = "",
-    val branchNodeId: String? = null
+    val parentId: String? = null,
+    val label: String,
+    val createdAt: Long = System.currentTimeMillis()
 )

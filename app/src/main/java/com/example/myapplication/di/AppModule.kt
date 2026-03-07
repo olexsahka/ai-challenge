@@ -64,8 +64,10 @@ val appModule = module {
     single { get<AppDatabase>().sessionDao() }
     single { get<AppDatabase>().messageDao() }
     single { get<AppDatabase>().summaryDao() }
+    single { get<AppDatabase>().factDao() }
+    single { get<AppDatabase>().branchNodeDao() }
     single { AgentMemory(androidContext()) }
-    single { LLMAgent(get(), get(), get(), get(), get()) }
+    single { LLMAgent(get(), get(), get(), get(), get(), get(), get()) }
 
     viewModel { ChatViewModel(get(), get(), get(), get()) }
     viewModel { AgentViewModel(get()) }
