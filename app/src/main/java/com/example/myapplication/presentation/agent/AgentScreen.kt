@@ -42,6 +42,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Snackbar
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
@@ -109,9 +110,16 @@ fun AgentScreen(modifier: Modifier = Modifier, viewModel: AgentViewModel = koinV
             ContextSettingsSheet(
                 session = session,
                 memories = uiState.memories,
+                profileDescription = uiState.profileDescription,
+                profileEnabled = uiState.profileEnabled,
+                taskName = uiState.taskName,
+                taskDescription = uiState.taskDescription,
+                taskEnabled = uiState.taskEnabled,
                 onSave = { prompt, model, temp, compressionEnabled, compressionN, compressionM, memoryStrategy, slidingWindowN, stickyFactsN ->
                     viewModel.saveSessionContext(prompt, model, temp, compressionEnabled, compressionN, compressionM, memoryStrategy, slidingWindowN, stickyFactsN)
                 },
+                onSaveUserProfile = { desc, enabled -> viewModel.saveUserProfile(desc, enabled) },
+                onSaveTaskMemory = { name, desc, enabled -> viewModel.saveTaskMemory(name, desc, enabled) },
                 onForgetMemory = { viewModel.forgetMemory(it) },
                 onForgetAll = { viewModel.forgetAllMemory() },
                 onDismiss = { viewModel.hideSettings() }
@@ -251,7 +259,14 @@ fun AgentScreen(modifier: Modifier = Modifier, viewModel: AgentViewModel = koinV
 private fun ContextSettingsSheet(
     session: SessionEntity,
     memories: List<MemoryEntry>,
+    profileDescription: String,
+    profileEnabled: Boolean,
+    taskName: String,
+    taskDescription: String,
+    taskEnabled: Boolean,
     onSave: (systemPrompt: String, model: String, temperature: Float, compressionEnabled: Boolean, compressionN: Int, compressionM: Int, memoryStrategy: String, slidingWindowN: Int, stickyFactsN: Int) -> Unit,
+    onSaveUserProfile: (description: String, enabled: Boolean) -> Unit,
+    onSaveTaskMemory: (name: String, description: String, enabled: Boolean) -> Unit,
     onForgetMemory: (String) -> Unit,
     onForgetAll: () -> Unit,
     onDismiss: () -> Unit
@@ -267,6 +282,11 @@ private fun ContextSettingsSheet(
     var selectedStrategy by rememberSaveable { mutableStateOf(session.memoryStrategy) }
     var slidingWindowNText by rememberSaveable { mutableStateOf(session.slidingWindowN.toString()) }
     var stickyFactsNText by rememberSaveable { mutableStateOf(session.stickyFactsN.toString()) }
+    var profileDescriptionText by rememberSaveable { mutableStateOf(profileDescription) }
+    var profileEnabledState by rememberSaveable { mutableStateOf(profileEnabled) }
+    var taskNameText by rememberSaveable { mutableStateOf(taskName) }
+    var taskDescriptionText by rememberSaveable { mutableStateOf(taskDescription) }
+    var taskEnabledState by rememberSaveable { mutableStateOf(taskEnabled) }
 
     val sheetState = rememberModalBottomSheetState()
 
@@ -418,6 +438,66 @@ private fun ContextSettingsSheet(
                 }
             }
             item {
+                HorizontalDivider()
+                Spacer(Modifier.height(4.dp))
+                Text("User Profile", style = MaterialTheme.typography.titleSmall)
+                Spacer(Modifier.height(4.dp))
+                Row(
+                    Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Text("User Data Usage", style = MaterialTheme.typography.bodyMedium)
+                    Switch(
+                        checked = profileEnabledState,
+                        onCheckedChange = { profileEnabledState = it }
+                    )
+                }
+                Spacer(Modifier.height(4.dp))
+                OutlinedTextField(
+                    value = profileDescriptionText,
+                    onValueChange = { profileDescriptionText = it },
+                    label = { Text("Profile description") },
+                    modifier = Modifier.fillMaxWidth(),
+                    minLines = 3,
+                    maxLines = 6
+                )
+            }
+            item {
+                HorizontalDivider()
+                Spacer(Modifier.height(4.dp))
+                Text("Task Memory", style = MaterialTheme.typography.titleSmall)
+                Spacer(Modifier.height(4.dp))
+                Row(
+                    Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Text("Task Memory Usage", style = MaterialTheme.typography.bodyMedium)
+                    Switch(
+                        checked = taskEnabledState,
+                        onCheckedChange = { taskEnabledState = it }
+                    )
+                }
+                Spacer(Modifier.height(4.dp))
+                OutlinedTextField(
+                    value = taskNameText,
+                    onValueChange = { taskNameText = it },
+                    label = { Text("Task name") },
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true
+                )
+                Spacer(Modifier.height(8.dp))
+                OutlinedTextField(
+                    value = taskDescriptionText,
+                    onValueChange = { taskDescriptionText = it },
+                    label = { Text("Task description") },
+                    modifier = Modifier.fillMaxWidth(),
+                    minLines = 3,
+                    maxLines = 6
+                )
+            }
+            item {
                 Button(
                     onClick = {
                         val n = compressionNText.toIntOrNull()?.coerceAtLeast(1) ?: 5
@@ -426,6 +506,8 @@ private fun ContextSettingsSheet(
                         val compressionActive = selectedStrategy == MemoryStrategy.COMPRESSION.name
                         val sfN = stickyFactsNText.toIntOrNull()?.coerceAtLeast(1) ?: 5
                         onSave(systemPrompt, model, temperature, compressionActive, n, m, selectedStrategy, swN, sfN)
+                        onSaveUserProfile(profileDescriptionText, profileEnabledState)
+                        onSaveTaskMemory(taskNameText, taskDescriptionText, taskEnabledState)
                     },
                     modifier = Modifier.fillMaxWidth()
                 ) { Text("Save") }

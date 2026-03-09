@@ -8,6 +8,7 @@ import com.example.myapplication.data.db.dao.FactDao
 import com.example.myapplication.data.db.dao.MessageDao
 import com.example.myapplication.data.db.dao.SessionDao
 import com.example.myapplication.data.db.dao.SummaryDao
+import com.example.myapplication.data.repository.UserProfileRepository
 import com.example.myapplication.data.db.entity.BranchNodeEntity
 import com.example.myapplication.data.db.entity.FactEntity
 import com.example.myapplication.data.db.entity.MessageEntity
@@ -34,7 +35,8 @@ class LLMAgent(
     private val memory: AgentMemory,
     private val summaryDao: SummaryDao,
     private val factDao: FactDao,
-    private val branchNodeDao: BranchNodeDao
+    private val branchNodeDao: BranchNodeDao,
+    private val userProfileRepository: UserProfileRepository
 ) {
     private val titleFormat = SimpleDateFormat("dd MMM yyyy, HH:mm", Locale.getDefault())
 
@@ -346,6 +348,8 @@ class LLMAgent(
         if (session.systemPrompt.isNotBlank()) parts.add(session.systemPrompt)
         val memCtx = memory.toContextString()
         if (memCtx.isNotBlank()) parts.add(memCtx)
+        val profileCtx = userProfileRepository.toContextString()
+        if (profileCtx.isNotBlank()) parts.add(profileCtx)
         return parts.joinToString("\n\n")
     }
 

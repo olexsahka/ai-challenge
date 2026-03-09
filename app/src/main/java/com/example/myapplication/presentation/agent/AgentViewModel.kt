@@ -4,6 +4,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.myapplication.agent.LLMAgent
 import com.example.myapplication.agent.MemoryEntry
+import com.example.myapplication.data.repository.UserProfileRepository
 import com.example.myapplication.data.db.entity.BranchNodeEntity
 import com.example.myapplication.data.db.entity.FactEntity
 import com.example.myapplication.data.db.entity.MemoryStrategy
@@ -33,10 +34,18 @@ data class AgentUiState(
     val activeSummary: SummaryEntity? = null,
     val activeFacts: List<FactEntity> = emptyList(),
     val branchNodes: List<BranchNodeEntity> = emptyList(),
-    val activeNodeId: String? = null
+    val activeNodeId: String? = null,
+    val profileDescription: String = "",
+    val profileEnabled: Boolean = false,
+    val taskName: String = "",
+    val taskDescription: String = "",
+    val taskEnabled: Boolean = false
 )
 
-class AgentViewModel(private val agent: LLMAgent) : ViewModel() {
+class AgentViewModel(
+    private val agent: LLMAgent,
+    private val userProfileRepository: UserProfileRepository
+) : ViewModel() {
 
     private val _uiState = MutableStateFlow(AgentUiState())
     val uiState: StateFlow<AgentUiState> = _uiState.asStateFlow()
@@ -70,6 +79,7 @@ class AgentViewModel(private val agent: LLMAgent) : ViewModel() {
             if (last != null) activateSession(last)
         }
         refreshMemories()
+        refreshProfile()
     }
 
     fun newSession() {
@@ -215,5 +225,30 @@ class AgentViewModel(private val agent: LLMAgent) : ViewModel() {
 
     private fun refreshMemories() {
         _uiState.update { it.copy(memories = agent.getMemories()) }
+    }
+
+    private fun refreshProfile() {
+        _uiState.update {
+            it.copy(
+                profileDescription = userProfileRepository.profileDescription,
+                profileEnabled = userProfileRepository.profileEnabled,
+                taskName = userProfileRepository.taskName,
+                taskDescription = userProfileRepository.taskDescription,
+                taskEnabled = userProfileRepository.taskEnabled
+            )
+        }
+    }
+
+    fun saveUserProfile(description: String, enabled: Boolean) {
+        userProfileRepository.profileDescription = description
+        userProfileRepository.profileEnabled = enabled
+        refreshProfile()
+    }
+
+    fun saveTaskMemory(name: String, description: String, enabled: Boolean) {
+        userProfileRepository.taskName = name
+        userProfileRepository.taskDescription = description
+        userProfileRepository.taskEnabled = enabled
+        refreshProfile()
     }
 }

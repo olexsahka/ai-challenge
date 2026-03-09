@@ -31,6 +31,7 @@ AgentViewModel           LLMAgent
 | `AgentViewModel` | Owns `AgentUiState`; bridges UI to `LLMAgent`; exposes session list, active messages, active summary, and memory entries as `StateFlow` |
 | `LLMAgent` | Encapsulates all request logic: builds history from DB, assembles instructions (system prompt + memory), applies compression if enabled, calls API, persists both user and assistant messages and summaries |
 | `AgentMemory` | Key-value memory store backed by `SharedPreferences`; injected into every request as additional instructions |
+| `UserProfileRepository` | Stores User Profile description + toggle and Task Memory (name, description) + toggle in `SharedPreferences`; appended to every request's instructions when the respective toggle is enabled |
 | `AppDatabase` | Room database with `sessions`, `messages`, and `summaries` tables |
 | `SessionDao` | CRUD for sessions; `observeAll()`, `getLatest()`, `getById()`, `updateContext()` |
 | `MessageDao` | Insert and observe messages by session |
@@ -134,6 +135,19 @@ When compression is enabled and a summary exists for the active session, a pinne
 
 `AgentMemory` wraps `SharedPreferences` as a flat key-value store shared across all sessions. Entries are displayed and managed in the context settings bottom sheet. Individual keys can be deleted; "Clear all" is available with a confirmation dialog.
 
+### User Profile
+
+Stored globally in `UserProfileRepository` (SharedPreferences). The context settings bottom sheet exposes a "User Profile" section with:
+- **Profile description** — free-form text describing the user.
+- **User Data Usage** toggle — when enabled, the profile description is appended to every request's instructions under "User profile:".
+
+### Task Memory
+
+Also stored globally in `UserProfileRepository`. The context settings bottom sheet exposes a "Task Memory" section with:
+- **Task name** — short label for the current task.
+- **Task description** — detailed description of the task.
+- **Task Memory Usage** toggle — when enabled, task name and description are appended to every request's instructions under "Current task:".
+
 ### Response metadata (`MessageMeta`)
 
 Every assistant message carries:
@@ -186,6 +200,7 @@ Accessible via the gear icon in the top bar. Stored in the `sessions` table:
 
 - **API key is hardcoded** in `AppModule.kt`. There is no secure storage or runtime configuration.
 - **Memory is global**, not per-session. All sessions share the same `AgentMemory` store.
+- **User Profile and Task Memory are global**, not per-session. All sessions share the same `UserProfileRepository` store.
 - **No migration strategy beyond destructive.** The Room database uses `fallbackToDestructiveMigration()`; schema changes wipe existing data.
 - **Temperature options are fixed** to `[0.0, 0.7, 1.0, 1.2]`; free-form input is not supported.
 - **Model list is hardcoded** in the UI (`AVAILABLE_MODELS`); it is not fetched live from the API.

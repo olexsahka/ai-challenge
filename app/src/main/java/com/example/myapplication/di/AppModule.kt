@@ -7,6 +7,7 @@ import com.example.myapplication.data.db.AppDatabase
 import com.example.myapplication.data.repository.ChatRepositoryImpl
 import com.example.myapplication.data.repository.SettingsRepository
 import com.example.myapplication.data.repository.SettingsRepositoryImpl
+import com.example.myapplication.data.repository.UserProfileRepository
 import com.example.myapplication.domain.repository.ChatRepository
 import com.example.myapplication.domain.usecase.SendMessageUseCase
 import com.example.myapplication.presentation.agent.AgentViewModel
@@ -67,8 +68,9 @@ val appModule = module {
     single { get<AppDatabase>().factDao() }
     single { get<AppDatabase>().branchNodeDao() }
     single { AgentMemory(androidContext()) }
-    single { LLMAgent(get(), get(), get(), get(), get(), get(), get()) }
+    single { UserProfileRepository(androidContext()) }
+    single { LLMAgent(get(), get(), get(), get(), get(), get(), get(), get()) }
 
     viewModel { ChatViewModel(get(), get(), get(), get()) }
-    viewModel { AgentViewModel(get()) }
+    viewModel { AgentViewModel(get(), get()) }
 }
