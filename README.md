@@ -179,7 +179,36 @@ Accessible via the gear icon in the top bar. Stored in the `sessions` table:
 
 ---
 
-## 4. Tech Stack
+## 4. KMP Migration
+
+Проект готовится к миграции на Kotlin Multiplatform. Подробный план — в [`KMP_MIGRATION_PLAN.md`](KMP_MIGRATION_PLAN.md).
+
+| Фаза | Статус |
+|---|---|
+| Фаза 0 — Baseline тесты | ✅ Завершена (86 тестов) |
+| Фаза 1 — Domain слой | 🔲 Не начата |
+| Фаза 2 — Platform абстракции | 🔲 Не начата |
+| Фаза 3 — Shared KMP модуль | 🔲 Не начата |
+| Фаза 4 — Ktor / serialization | 🔲 Не начата |
+| Фаза 5 — JS таргет / Web клиент | 🔲 Не начата |
+
+### Тестовое покрытие (baseline)
+
+```
+app/src/test/
+├── AgentRunnerTest.kt          — ReAct loop, все действия, maxIterations
+├── BuildHistoryTest.kt         — все 5 стратегий памяти
+├── BuildInstructionsTest.kt    — сборка системного промпта
+├── SendMessageTest.kt          — полный flow sendMessage + persistence
+├── BuildBranchHistoryTest.kt   — branching history по ancestor chain
+├── AgentMemoryTest.kt          — KV store логика
+├── UserProfileRepositoryTest.kt — profile/task context строки
+└── LLMAgentTestBase.kt         — Fake DAO инфраструктура
+```
+
+---
+
+## 5. Tech Stack
 
 | Category | Technology |
 |---|---|
@@ -196,7 +225,7 @@ Accessible via the gear icon in the top bar. Stored in the `sessions` table:
 
 ---
 
-## 5. Limitations & Assumptions
+## 6. Limitations & Assumptions
 
 - **API key is hardcoded** in `AppModule.kt`. There is no secure storage or runtime configuration.
 - **Memory is global**, not per-session. All sessions share the same `AgentMemory` store.

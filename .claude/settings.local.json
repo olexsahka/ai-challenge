@@ -1,3 +1,8 @@
 {
-  "spinnerTipsEnabled": false
+  "spinnerTipsEnabled": false,
+  "permissions": {
+    "allow": [
+      "Bash(./gradlew :app:testDebugUnitTest:*)"
+    ]
+  }
 }

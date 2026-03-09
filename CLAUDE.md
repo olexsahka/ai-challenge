@@ -11,14 +11,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 # Build and install on connected device
 ./gradlew installDebug
 
-# Run unit tests
-./gradlew test
+# Run all unit tests (baseline — должно быть 86 тестов, 0 failures)
+./gradlew :app:testDebugUnitTest
 
 # Run instrumented tests (requires connected device/emulator)
 ./gradlew connectedAndroidTest
-
-# Run a single test class
-./gradlew test --tests "com.example.myapplication.ExampleUnitTest"
 
 # Clean build
 ./gradlew clean assembleDebug
@@ -71,3 +68,30 @@ Standalone ReAct-style agent (max 6 iterations) used independently from `LLMAgen
 - **`UserProfileRepository`** stores User Profile and Task Memory globally (SharedPreferences). When enabled via toggles, their content is appended to every request's instructions by `LLMAgent.buildInstructions()`.
 - `STICKY_FACTS` and `COMPRESSION` strategies make an extra API call synchronously within `sendMessage`, adding latency.
 - Session title is auto-set from the first sentence of the first assistant response.
+- **`jvmTarget = "11"`** — повышен с 1.8 для совместимости с mockito-kotlin тестами.
+
+## Testing
+
+Baseline тесты (Фаза 0 KMP-миграции) — 86 unit тестов, 0 failures.
+
+```
+app/src/test/java/com/example/myapplication/
+├── AgentRunnerTest.kt           — ReAct loop (16 тестов)
+├── BuildHistoryTest.kt          — 5 стратегий памяти (12 тестов)
+├── BuildInstructionsTest.kt     — buildInstructions логика (11 тестов)
+├── SendMessageTest.kt           — sendMessage full flow (11 тестов)
+├── BuildBranchHistoryTest.kt    — branching history (9 тестов)
+├── AgentMemoryTest.kt           — KV store (10 тестов)
+├── UserProfileRepositoryTest.kt — profile/task context (11 тестов)
+└── LLMAgentTestBase.kt          — Fake DAO инфраструктура (без тестов)
+```
+
+**Тестовая инфраструктура:** вместо реальных DAO используются `FakeSessionDao`, `FakeMessageDao`, `FakeSummaryDao`, `FakeFactDao`, `FakeBranchNodeDao` (in-memory, без Room/Android). `AgentMemory` и `UserProfileRepository` мокируются через Mockito (изолируют `Context`/`SharedPreferences`).
+
+**Важно для будущих тестов:** `CapturingAnthropicApi.lastRequest` перезаписывается на каждый API вызов. Для стратегий с двумя вызовами (STICKY_FACTS, COMPRESSION) использовать `SequentialAnthropicApi.requests.first()` чтобы получить именно главный запрос.
+
+## KMP Migration
+
+Проект в процессе подготовки к Kotlin Multiplatform. План: [`KMP_MIGRATION_PLAN.md`](KMP_MIGRATION_PLAN.md).
+
+**Текущий статус:** Фаза 0 завершена. Следующий шаг — Фаза 1 (выделение domain слоя, введение интерфейсов репозиториев).
