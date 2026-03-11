@@ -1,5 +1,7 @@
 package com.example.myapplication
 
+import com.example.myapplication.data.repository.TaskMemory
+import com.example.myapplication.data.repository.UserInformation
 import org.junit.Before
 import org.junit.Test
 import org.junit.Assert.*
@@ -13,61 +15,91 @@ import org.junit.Assert.*
  */
 class UserProfileRepositoryTest {
 
-    private lateinit var prefs: FakeSharedPreferences
     private lateinit var repo: TestableUserProfileRepository
 
     @Before
     fun setup() {
-        prefs = FakeSharedPreferences()
-        repo = TestableUserProfileRepository(prefs)
+        repo = TestableUserProfileRepository()
     }
 
-    // --- toggle off ---
+    // --- empty state ---
 
     @Test
-    fun `toContextString when both toggles off returns blank`() {
-        repo.profileEnabled = false
-        repo.profileDescription = "Some profile"
-        repo.taskEnabled = false
-        repo.taskName = "My task"
-        repo.taskDescription = "Do something"
+    fun `toContextString when all fields blank returns blank`() {
         assertTrue(repo.toContextString().isBlank())
     }
 
+    // --- user information ---
+
     @Test
-    fun `toContextString when profile enabled but blank description returns blank`() {
-        repo.profileEnabled = true
-        repo.profileDescription = "   "
+    fun `toContextString when name set includes name line`() {
+        repo.userInformation = UserInformation(name = "Alice")
+        val result = repo.toContextString()
+        assertTrue(result.contains("User information:"))
+        assertTrue(result.contains("Name: Alice"))
+    }
+
+    @Test
+    fun `toContextString when occupation set includes occupation line`() {
+        repo.userInformation = UserInformation(occupation = "Android Developer")
+        val result = repo.toContextString()
+        assertTrue(result.contains("Occupation: Android Developer"))
+    }
+
+    @Test
+    fun `toContextString when language set includes language line`() {
+        repo.userInformation = UserInformation(language = "Russian")
+        val result = repo.toContextString()
+        assertTrue(result.contains("Language: Russian"))
+    }
+
+    @Test
+    fun `toContextString when responseStyle set includes style line`() {
+        repo.userInformation = UserInformation(responseStyle = "concise")
+        val result = repo.toContextString()
+        assertTrue(result.contains("Response style: concise"))
+    }
+
+    @Test
+    fun `toContextString when responseFormat set includes format line`() {
+        repo.userInformation = UserInformation(responseFormat = "markdown")
+        val result = repo.toContextString()
+        assertTrue(result.contains("Response format: markdown"))
+    }
+
+    @Test
+    fun `toContextString when constraints set includes constraints line`() {
+        repo.userInformation = UserInformation(constraints = "no code")
+        val result = repo.toContextString()
+        assertTrue(result.contains("Constraints: no code"))
+    }
+
+    @Test
+    fun `toContextString when additionalNotes set includes notes line`() {
+        repo.userInformation = UserInformation(additionalNotes = "be friendly")
+        val result = repo.toContextString()
+        assertTrue(result.contains("Notes: be friendly"))
+    }
+
+    @Test
+    fun `toContextString trims whitespace from name`() {
+        repo.userInformation = UserInformation(name = "  Bob  ")
+        val result = repo.toContextString()
+        assertTrue(result.contains("Name: Bob"))
+        assertFalse(result.contains("  Bob  "))
+    }
+
+    @Test
+    fun `toContextString blank user information produces no user information section`() {
+        repo.userInformation = UserInformation()
         assertTrue(repo.toContextString().isBlank())
     }
 
-    // --- profile only ---
-
-    @Test
-    fun `toContextString when profile enabled returns user profile section`() {
-        repo.profileEnabled = true
-        repo.profileDescription = "Senior Android developer"
-        val result = repo.toContextString()
-        assertTrue(result.contains("User profile:"))
-        assertTrue(result.contains("Senior Android developer"))
-    }
-
-    @Test
-    fun `toContextString profile section does not include task when task disabled`() {
-        repo.profileEnabled = true
-        repo.profileDescription = "Developer"
-        repo.taskEnabled = false
-        val result = repo.toContextString()
-        assertFalse(result.contains("Current task:"))
-    }
-
-    // --- task only ---
+    // --- task memory ---
 
     @Test
     fun `toContextString when task enabled with name and description includes both`() {
-        repo.taskEnabled = true
-        repo.taskName = "KMP Migration"
-        repo.taskDescription = "Move business logic to shared module"
+        repo.taskMemory = TaskMemory(name = "KMP Migration", description = "Move business logic to shared module", enabled = true)
         val result = repo.toContextString()
         assertTrue(result.contains("Current task:"))
         assertTrue(result.contains("Name: KMP Migration"))
@@ -76,9 +108,7 @@ class UserProfileRepositoryTest {
 
     @Test
     fun `toContextString when task enabled with name only shows name without description line`() {
-        repo.taskEnabled = true
-        repo.taskName = "My Task"
-        repo.taskDescription = ""
+        repo.taskMemory = TaskMemory(name = "My Task", enabled = true)
         val result = repo.toContextString()
         assertTrue(result.contains("Current task:"))
         assertTrue(result.contains("Name: My Task"))
@@ -87,9 +117,7 @@ class UserProfileRepositoryTest {
 
     @Test
     fun `toContextString when task enabled with description only shows description without name line`() {
-        repo.taskEnabled = true
-        repo.taskName = ""
-        repo.taskDescription = "Do the thing"
+        repo.taskMemory = TaskMemory(description = "Do the thing", enabled = true)
         val result = repo.toContextString()
         assertTrue(result.contains("Current task:"))
         assertTrue(result.contains("Description: Do the thing"))
@@ -97,39 +125,27 @@ class UserProfileRepositoryTest {
     }
 
     @Test
+    fun `toContextString when task disabled does not include task section`() {
+        repo.taskMemory = TaskMemory(name = "Hidden task", description = "Should not appear", enabled = false)
+        assertFalse(repo.toContextString().contains("Current task:"))
+    }
+
+    @Test
     fun `toContextString when task enabled but both name and description blank returns blank`() {
-        repo.taskEnabled = true
-        repo.taskName = ""
-        repo.taskDescription = "  "
-        // blank description — but whitespace-only taskDescription fails isNotBlank so no section
-        repo.taskDescription = ""
+        repo.taskMemory = TaskMemory(enabled = true)
         assertTrue(repo.toContextString().isBlank())
     }
 
-    // --- both enabled ---
+    // --- combined ---
 
     @Test
-    fun `toContextString when both enabled both sections appear`() {
-        repo.profileEnabled = true
-        repo.profileDescription = "Alice"
-        repo.taskEnabled = true
-        repo.taskName = "Build app"
-        repo.taskDescription = "Write tests"
+    fun `toContextString user information appears before task section`() {
+        repo.userInformation = UserInformation(name = "Alice")
+        repo.taskMemory = TaskMemory(name = "Build app", description = "Write tests", enabled = true)
         val result = repo.toContextString()
-        assertTrue(result.contains("User profile:"))
-        assertTrue(result.contains("Alice"))
-        assertTrue(result.contains("Current task:"))
-        assertTrue(result.contains("Build app"))
-        assertTrue(result.contains("Write tests"))
-    }
-
-    @Test
-    fun `toContextString trims whitespace from profile description`() {
-        repo.profileEnabled = true
-        repo.profileDescription = "  Alice  "
-        val result = repo.toContextString()
-        assertTrue(result.contains("Alice"))
-        assertFalse(result.contains("  Alice  "))
+        val infoIdx = result.indexOf("User information:")
+        val taskIdx = result.indexOf("Current task:")
+        assertTrue(infoIdx < taskIdx)
     }
 }
 
@@ -137,47 +153,35 @@ class UserProfileRepositoryTest {
 // Test infrastructure
 // ---------------------------------------------------------------------------
 
-class TestableUserProfileRepository(private val prefs: FakeSharedPreferences) {
+class TestableUserProfileRepository {
 
-    var profileDescription: String
-        get() = prefs.getString(KEY_PROFILE_DESCRIPTION) ?: ""
-        set(value) = prefs.putString(KEY_PROFILE_DESCRIPTION, value)
-
-    var profileEnabled: Boolean
-        get() = prefs.getString(KEY_PROFILE_ENABLED) == "true"
-        set(value) = prefs.putString(KEY_PROFILE_ENABLED, value.toString())
-
-    var taskName: String
-        get() = prefs.getString(KEY_TASK_NAME) ?: ""
-        set(value) = prefs.putString(KEY_TASK_NAME, value)
-
-    var taskDescription: String
-        get() = prefs.getString(KEY_TASK_DESCRIPTION) ?: ""
-        set(value) = prefs.putString(KEY_TASK_DESCRIPTION, value)
-
-    var taskEnabled: Boolean
-        get() = prefs.getString(KEY_TASK_ENABLED) == "true"
-        set(value) = prefs.putString(KEY_TASK_ENABLED, value.toString())
+    var userInformation: UserInformation = UserInformation()
+    var taskMemory: TaskMemory = TaskMemory()
 
     fun toContextString(): String {
         val parts = mutableListOf<String>()
-        if (profileEnabled && profileDescription.isNotBlank()) {
-            parts.add("User profile:\n${profileDescription.trim()}")
+
+        val info = userInformation
+        val infoLines = mutableListOf<String>()
+        if (info.name.isNotBlank()) infoLines.add("Name: ${info.name.trim()}")
+        if (info.occupation.isNotBlank()) infoLines.add("Occupation: ${info.occupation.trim()}")
+        if (info.language.isNotBlank()) infoLines.add("Language: ${info.language.trim()}")
+        if (info.responseStyle.isNotBlank()) infoLines.add("Response style: ${info.responseStyle.trim()}")
+        if (info.responseFormat.isNotBlank()) infoLines.add("Response format: ${info.responseFormat.trim()}")
+        if (info.constraints.isNotBlank()) infoLines.add("Constraints: ${info.constraints.trim()}")
+        if (info.additionalNotes.isNotBlank()) infoLines.add("Notes: ${info.additionalNotes.trim()}")
+        if (infoLines.isNotEmpty()) {
+            parts.add("User information:\n${infoLines.joinToString("\n")}")
         }
-        if (taskEnabled && (taskName.isNotBlank() || taskDescription.isNotBlank())) {
+
+        val task = taskMemory
+        if (task.enabled && (task.name.isNotBlank() || task.description.isNotBlank())) {
             val sb = StringBuilder("Current task:")
-            if (taskName.isNotBlank()) sb.append("\nName: ${taskName.trim()}")
-            if (taskDescription.isNotBlank()) sb.append("\nDescription: ${taskDescription.trim()}")
+            if (task.name.isNotBlank()) sb.append("\nName: ${task.name.trim()}")
+            if (task.description.isNotBlank()) sb.append("\nDescription: ${task.description.trim()}")
             parts.add(sb.toString())
         }
-        return parts.joinToString("\n\n")
-    }
 
-    companion object {
-        private const val KEY_PROFILE_DESCRIPTION = "profile_description"
-        private const val KEY_PROFILE_ENABLED = "profile_enabled"
-        private const val KEY_TASK_NAME = "task_name"
-        private const val KEY_TASK_DESCRIPTION = "task_description"
-        private const val KEY_TASK_ENABLED = "task_enabled"
+        return parts.joinToString("\n\n")
     }
 }

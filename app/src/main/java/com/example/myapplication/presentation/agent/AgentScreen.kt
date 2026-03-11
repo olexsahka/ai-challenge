@@ -69,6 +69,8 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.example.myapplication.agent.MemoryEntry
+import com.example.myapplication.data.repository.TaskMemory
+import com.example.myapplication.data.repository.UserInformation
 import com.example.myapplication.data.db.entity.BranchNodeEntity
 import com.example.myapplication.data.db.entity.FactEntity
 import com.example.myapplication.data.db.entity.MemoryStrategy
@@ -110,16 +112,13 @@ fun AgentScreen(modifier: Modifier = Modifier, viewModel: AgentViewModel = koinV
             ContextSettingsSheet(
                 session = session,
                 memories = uiState.memories,
-                profileDescription = uiState.profileDescription,
-                profileEnabled = uiState.profileEnabled,
-                taskName = uiState.taskName,
-                taskDescription = uiState.taskDescription,
-                taskEnabled = uiState.taskEnabled,
+                userInformation = uiState.userInformation,
+                taskMemory = uiState.taskMemory,
                 onSave = { prompt, model, temp, compressionEnabled, compressionN, compressionM, memoryStrategy, slidingWindowN, stickyFactsN ->
                     viewModel.saveSessionContext(prompt, model, temp, compressionEnabled, compressionN, compressionM, memoryStrategy, slidingWindowN, stickyFactsN)
                 },
-                onSaveUserProfile = { desc, enabled -> viewModel.saveUserProfile(desc, enabled) },
-                onSaveTaskMemory = { name, desc, enabled -> viewModel.saveTaskMemory(name, desc, enabled) },
+                onSaveUserInformation = { viewModel.saveUserInformation(it) },
+                onSaveTaskMemory = { viewModel.saveTaskMemory(it) },
                 onForgetMemory = { viewModel.forgetMemory(it) },
                 onForgetAll = { viewModel.forgetAllMemory() },
                 onDismiss = { viewModel.hideSettings() }
@@ -259,14 +258,11 @@ fun AgentScreen(modifier: Modifier = Modifier, viewModel: AgentViewModel = koinV
 private fun ContextSettingsSheet(
     session: SessionEntity,
     memories: List<MemoryEntry>,
-    profileDescription: String,
-    profileEnabled: Boolean,
-    taskName: String,
-    taskDescription: String,
-    taskEnabled: Boolean,
+    userInformation: UserInformation,
+    taskMemory: TaskMemory,
     onSave: (systemPrompt: String, model: String, temperature: Float, compressionEnabled: Boolean, compressionN: Int, compressionM: Int, memoryStrategy: String, slidingWindowN: Int, stickyFactsN: Int) -> Unit,
-    onSaveUserProfile: (description: String, enabled: Boolean) -> Unit,
-    onSaveTaskMemory: (name: String, description: String, enabled: Boolean) -> Unit,
+    onSaveUserInformation: (UserInformation) -> Unit,
+    onSaveTaskMemory: (TaskMemory) -> Unit,
     onForgetMemory: (String) -> Unit,
     onForgetAll: () -> Unit,
     onDismiss: () -> Unit
@@ -282,11 +278,16 @@ private fun ContextSettingsSheet(
     var selectedStrategy by rememberSaveable { mutableStateOf(session.memoryStrategy) }
     var slidingWindowNText by rememberSaveable { mutableStateOf(session.slidingWindowN.toString()) }
     var stickyFactsNText by rememberSaveable { mutableStateOf(session.stickyFactsN.toString()) }
-    var profileDescriptionText by rememberSaveable { mutableStateOf(profileDescription) }
-    var profileEnabledState by rememberSaveable { mutableStateOf(profileEnabled) }
-    var taskNameText by rememberSaveable { mutableStateOf(taskName) }
-    var taskDescriptionText by rememberSaveable { mutableStateOf(taskDescription) }
-    var taskEnabledState by rememberSaveable { mutableStateOf(taskEnabled) }
+    var userNameText by rememberSaveable { mutableStateOf(userInformation.name) }
+    var userOccupationText by rememberSaveable { mutableStateOf(userInformation.occupation) }
+    var userLanguageText by rememberSaveable { mutableStateOf(userInformation.language) }
+    var responseStyleText by rememberSaveable { mutableStateOf(userInformation.responseStyle) }
+    var responseFormatText by rememberSaveable { mutableStateOf(userInformation.responseFormat) }
+    var constraintsText by rememberSaveable { mutableStateOf(userInformation.constraints) }
+    var additionalNotesText by rememberSaveable { mutableStateOf(userInformation.additionalNotes) }
+    var taskNameText by rememberSaveable { mutableStateOf(taskMemory.name) }
+    var taskDescriptionText by rememberSaveable { mutableStateOf(taskMemory.description) }
+    var taskEnabledState by rememberSaveable { mutableStateOf(taskMemory.enabled) }
 
     val sheetState = rememberModalBottomSheetState()
 
@@ -440,27 +441,64 @@ private fun ContextSettingsSheet(
             item {
                 HorizontalDivider()
                 Spacer(Modifier.height(4.dp))
-                Text("User Profile", style = MaterialTheme.typography.titleSmall)
-                Spacer(Modifier.height(4.dp))
-                Row(
-                    Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.SpaceBetween
-                ) {
-                    Text("User Data Usage", style = MaterialTheme.typography.bodyMedium)
-                    Switch(
-                        checked = profileEnabledState,
-                        onCheckedChange = { profileEnabledState = it }
-                    )
-                }
-                Spacer(Modifier.height(4.dp))
+                Text("User Information", style = MaterialTheme.typography.titleSmall)
+                Spacer(Modifier.height(8.dp))
                 OutlinedTextField(
-                    value = profileDescriptionText,
-                    onValueChange = { profileDescriptionText = it },
-                    label = { Text("Profile description") },
+                    value = userNameText,
+                    onValueChange = { userNameText = it },
+                    label = { Text("Name") },
                     modifier = Modifier.fillMaxWidth(),
-                    minLines = 3,
-                    maxLines = 6
+                    singleLine = true
+                )
+                Spacer(Modifier.height(8.dp))
+                OutlinedTextField(
+                    value = userOccupationText,
+                    onValueChange = { userOccupationText = it },
+                    label = { Text("Occupation / Role") },
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true
+                )
+                Spacer(Modifier.height(8.dp))
+                OutlinedTextField(
+                    value = userLanguageText,
+                    onValueChange = { userLanguageText = it },
+                    label = { Text("Preferred language") },
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true
+                )
+                Spacer(Modifier.height(8.dp))
+                OutlinedTextField(
+                    value = responseStyleText,
+                    onValueChange = { responseStyleText = it },
+                    label = { Text("Response style (e.g. concise, detailed, formal)") },
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true
+                )
+                Spacer(Modifier.height(8.dp))
+                OutlinedTextField(
+                    value = responseFormatText,
+                    onValueChange = { responseFormatText = it },
+                    label = { Text("Response format (e.g. plain text, markdown, bullets)") },
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true
+                )
+                Spacer(Modifier.height(8.dp))
+                OutlinedTextField(
+                    value = constraintsText,
+                    onValueChange = { constraintsText = it },
+                    label = { Text("Constraints (e.g. no code, no jargon)") },
+                    modifier = Modifier.fillMaxWidth(),
+                    minLines = 2,
+                    maxLines = 4
+                )
+                Spacer(Modifier.height(8.dp))
+                OutlinedTextField(
+                    value = additionalNotesText,
+                    onValueChange = { additionalNotesText = it },
+                    label = { Text("Additional notes") },
+                    modifier = Modifier.fillMaxWidth(),
+                    minLines = 2,
+                    maxLines = 4
                 )
             }
             item {
@@ -506,8 +544,8 @@ private fun ContextSettingsSheet(
                         val compressionActive = selectedStrategy == MemoryStrategy.COMPRESSION.name
                         val sfN = stickyFactsNText.toIntOrNull()?.coerceAtLeast(1) ?: 5
                         onSave(systemPrompt, model, temperature, compressionActive, n, m, selectedStrategy, swN, sfN)
-                        onSaveUserProfile(profileDescriptionText, profileEnabledState)
-                        onSaveTaskMemory(taskNameText, taskDescriptionText, taskEnabledState)
+                        onSaveUserInformation(UserInformation(userNameText, userOccupationText, userLanguageText, responseStyleText, responseFormatText, constraintsText, additionalNotesText))
+                        onSaveTaskMemory(TaskMemory(taskNameText, taskDescriptionText, taskEnabledState))
                     },
                     modifier = Modifier.fillMaxWidth()
                 ) { Text("Save") }
