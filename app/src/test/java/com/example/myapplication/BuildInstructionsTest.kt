@@ -38,7 +38,8 @@ class BuildInstructionsTest {
         summaryDao = FakeSummaryDao(),
         factDao = FakeFactDao(),
         branchNodeDao = FakeBranchNodeDao(),
-        userProfileRepository = makeMockUserProfile(profileContext)
+        userProfileRepository = makeMockUserProfile(profileContext),
+        taskFsmRepository = makeMockTaskFsmRepository()
     )
 
     // -------------------------------------------------------------------------

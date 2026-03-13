@@ -1,6 +1,7 @@
 package com.example.myapplication.presentation.agent
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -27,6 +28,9 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Pause
+import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -38,6 +42,7 @@ import androidx.compose.material3.ExposedDropdownMenuDefaults
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedTextField
@@ -63,7 +68,9 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
@@ -75,6 +82,8 @@ import com.example.myapplication.data.db.entity.BranchNodeEntity
 import com.example.myapplication.data.db.entity.FactEntity
 import com.example.myapplication.data.db.entity.MemoryStrategy
 import com.example.myapplication.data.db.entity.SessionEntity
+import com.example.myapplication.data.db.entity.TaskFsmEntity
+import com.example.myapplication.data.db.entity.TaskStage
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material3.RadioButton
@@ -226,15 +235,63 @@ fun AgentScreen(modifier: Modifier = Modifier, viewModel: AgentViewModel = koinV
                     if (uiState.activeFacts.isNotEmpty() && activeStrategy == MemoryStrategy.STICKY_FACTS.name) {
                         FactsPinBanner(facts = uiState.activeFacts)
                     }
+                    val hasMessages = messages.isNotEmpty()
+                    val fsmStage = uiState.taskFsmState?.stage
+                    if (hasMessages || fsmStage == com.example.myapplication.data.db.entity.TaskStage.ERROR.name) {
+                        uiState.taskFsmState?.let { fsm ->
+                            FsmStatusBanner(
+                                fsm = fsm,
+                                isLoading = uiState.isLoading,
+                                onRunAll = { viewModel.runAllStages() },
+                                onStop = { viewModel.stopAutoRun() },
+                                onReset = { viewModel.resetTask() }
+                            )
+                        }
+                    }
                     MessageList(
                         messages = messages,
                         isLoading = uiState.isLoading,
+                        hasFsm = uiState.taskFsmState != null,
                         modifier = Modifier.weight(1f)
                     )
                     val totalInput = messages.sumOf { it.meta?.inputTokens ?: 0 }
                     val totalOutput = messages.sumOf { it.meta?.outputTokens ?: 0 }
                     if (totalInput > 0 || totalOutput > 0) {
                         TokenTotalsBar(totalInput = totalInput, totalOutput = totalOutput)
+                    }
+                    // Show "Run All" button when task memory enabled, not loading, not autoRun, not DONE
+                    val fsm = uiState.taskFsmState
+                    val fsmDone = fsm?.stage == com.example.myapplication.data.db.entity.TaskStage.DONE.name
+                    val fsmError = fsm?.stage == com.example.myapplication.data.db.entity.TaskStage.ERROR.name
+                    val fsmWaiting = fsm != null && !fsm.autoRun && !fsmDone && !fsmError
+                    // FSM not started or in ERROR: show button only when user has typed something
+                    val fsmNotStarted = (fsm == null || fsmError) && inputText.isNotBlank()
+                    val showRunAll = uiState.taskMemory.enabled
+                        && !uiState.isLoading
+                        && (fsmWaiting || fsmNotStarted)
+                    if (showRunAll) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .background(MaterialTheme.colorScheme.surface)
+                                .padding(horizontal = 8.dp, vertical = 2.dp),
+                            horizontalArrangement = Arrangement.End
+                        ) {
+                            TextButton(
+                                onClick = {
+                                    if (fsm == null || fsmError) {
+                                        viewModel.sendMessageWithAutoRun(inputText)
+                                        inputText = ""
+                                    } else {
+                                        viewModel.runAllStages()
+                                    }
+                                }
+                            ) {
+                                Icon(Icons.Filled.PlayArrow, contentDescription = null, modifier = Modifier.size(16.dp))
+                                Spacer(Modifier.width(4.dp))
+                                Text("Запустить все этапы", style = MaterialTheme.typography.labelMedium)
+                            }
+                        }
                     }
                     MessageInput(
                         text = inputText,
@@ -797,15 +854,165 @@ private fun BranchSidebar(
     }
 }
 
+// Detects FSM stage header embedded in message content: "**📋 Planning**"
+private fun fsmStageHeader(content: String): String? {
+    val line = content.lines().firstOrNull() ?: return null
+    return if (line.startsWith("**") && line.endsWith("**")) line.removeSurrounding("**") else null
+}
+
+private fun stageColor(header: String): Color? = when {
+    header.contains("Planning", ignoreCase = true) -> Color(0xFF1565C0)   // blue
+    header.contains("Execution", ignoreCase = true) -> Color(0xFF2E7D32)  // green
+    header.contains("Validation", ignoreCase = true) -> Color(0xFFE65100) // orange
+    header.contains("Done", ignoreCase = true) -> Color(0xFF6A1B9A)       // purple
+    else -> null
+}
+
+@Composable
+private fun FsmStatusBanner(
+    fsm: TaskFsmEntity,
+    isLoading: Boolean,
+    onRunAll: () -> Unit,
+    onStop: () -> Unit,
+    onReset: () -> Unit
+) {
+    val stage = runCatching { TaskStage.valueOf(fsm.stage) }.getOrNull()
+    val stageLabel = when (stage) {
+        TaskStage.PLANNING -> "📋 Планирование"
+        TaskStage.EXECUTION -> "⚙️ Выполнение"
+        TaskStage.VALIDATION -> "✅ Валидация"
+        TaskStage.DONE -> "🏁 Готово"
+        TaskStage.ERROR -> "❌ Ошибка"
+        null -> fsm.stage
+    }
+    val stepInfo = when {
+        stage == TaskStage.EXECUTION && fsm.stepCount > 0 -> "шаг ${fsm.step}/${fsm.stepCount}"
+        stage != TaskStage.DONE && stage != null -> "шаг ${fsm.step}"
+        else -> null
+    }
+    val progress = when (stage) {
+        TaskStage.PLANNING -> 0.1f
+        TaskStage.EXECUTION -> if (fsm.stepCount > 0) 0.1f + 0.7f * (fsm.step.toFloat() / fsm.stepCount) else 0.4f
+        TaskStage.VALIDATION -> 0.85f
+        TaskStage.DONE -> 1.0f
+        TaskStage.ERROR -> 0f
+        null -> 0f
+    }
+    val bannerColor = when (stage) {
+        TaskStage.PLANNING -> Color(0xFFE3F2FD)
+        TaskStage.EXECUTION -> Color(0xFFE8F5E9)
+        TaskStage.VALIDATION -> Color(0xFFFFF3E0)
+        TaskStage.DONE -> Color(0xFFF3E5F5)
+        TaskStage.ERROR -> Color(0xFFFFEBEE)
+        null -> MaterialTheme.colorScheme.surfaceVariant
+    }
+    val accentColor = when (stage) {
+        TaskStage.PLANNING -> Color(0xFF1565C0)
+        TaskStage.EXECUTION -> Color(0xFF2E7D32)
+        TaskStage.VALIDATION -> Color(0xFFE65100)
+        TaskStage.DONE -> Color(0xFF6A1B9A)
+        TaskStage.ERROR -> Color(0xFFB71C1C)
+        null -> MaterialTheme.colorScheme.primary
+    }
+
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        color = bannerColor,
+        tonalElevation = 3.dp
+    ) {
+        Column(modifier = Modifier.fillMaxWidth()) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 12.dp, vertical = 6.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = "Task FSM",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = accentColor.copy(alpha = 0.7f)
+                    )
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Text(
+                            text = stageLabel,
+                            style = MaterialTheme.typography.bodyMedium,
+                            fontWeight = FontWeight.SemiBold,
+                            color = accentColor
+                        )
+                        if (stepInfo != null) {
+                            Text(
+                                text = stepInfo,
+                                style = MaterialTheme.typography.labelSmall,
+                                color = accentColor.copy(alpha = 0.7f)
+                            )
+                        }
+                        if (fsm.autoRun && stage != TaskStage.DONE) {
+                            Surface(
+                                shape = RoundedCornerShape(4.dp),
+                                color = Color(0xFFE8F5E9)
+                            ) {
+                                Text(
+                                    text = "АВТО",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = Color(0xFF2E7D32),
+                                    fontWeight = FontWeight.Bold,
+                                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                )
+                            }
+                        }
+                    }
+                    Text(
+                        text = fsm.expectedAction,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = accentColor.copy(alpha = 0.6f)
+                    )
+                }
+                if (stage != TaskStage.DONE && stage != TaskStage.ERROR) {
+                    if (fsm.autoRun) {
+                        IconButton(onClick = onStop, enabled = !isLoading, modifier = Modifier.size(32.dp)) {
+                            Icon(Icons.Filled.Pause, contentDescription = "Остановить авто-запуск", tint = Color(0xFFE65100))
+                        }
+                    } else {
+                        IconButton(onClick = onRunAll, enabled = !isLoading, modifier = Modifier.size(32.dp)) {
+                            Icon(Icons.Filled.PlayArrow, contentDescription = "Запустить всё", tint = accentColor)
+                        }
+                    }
+                }
+                IconButton(onClick = onReset, enabled = !isLoading, modifier = Modifier.size(32.dp)) {
+                    Icon(Icons.Filled.Refresh, contentDescription = "Сбросить задачу", tint = accentColor.copy(alpha = 0.7f))
+                }
+            }
+            LinearProgressIndicator(
+                progress = { progress },
+                modifier = Modifier.fillMaxWidth().height(3.dp),
+                color = if (isLoading && fsm.autoRun) accentColor else accentColor.copy(alpha = 0.5f),
+                trackColor = accentColor.copy(alpha = 0.1f)
+            )
+        }
+    }
+}
+
 @Composable
 private fun MessageList(
     messages: List<Message>,
     isLoading: Boolean,
+    hasFsm: Boolean,
     modifier: Modifier = Modifier
 ) {
     val listState = rememberLazyListState()
-    LaunchedEffect(messages.size) {
-        if (messages.isNotEmpty()) listState.animateScrollToItem(messages.size - 1)
+    // Scroll to bottom whenever message count changes OR last message content changes
+    val lastMessageId = messages.lastOrNull()?.id
+    val lastMessageContent = messages.lastOrNull()?.content
+    LaunchedEffect(messages.size, lastMessageId, lastMessageContent) {
+        if (messages.isNotEmpty()) {
+            listState.scrollToItem(messages.size - 1 + 2) // +2 for loading/spacer items
+        }
+    }
+    LaunchedEffect(isLoading) {
+        if (isLoading && messages.isNotEmpty()) {
+            listState.scrollToItem(messages.size - 1 + 2)
+        }
     }
     LazyColumn(
         state = listState,
@@ -817,7 +1024,11 @@ private fun MessageList(
             val nextMeta = if (message.isFromUser)
                 messages.getOrNull(index + 1)?.meta
             else null
-            MessageBubble(message = message, followingMeta = nextMeta)
+            if (!message.isFromUser && hasFsm && fsmStageHeader(message.content) != null) {
+                FsmMessageBubble(message = message)
+            } else {
+                MessageBubble(message = message, followingMeta = nextMeta)
+            }
         }
         if (isLoading) {
             item {
@@ -836,6 +1047,56 @@ private fun MessageList(
             }
         }
         item { Spacer(Modifier.height(4.dp)) }
+    }
+}
+
+@Composable
+private fun FsmMessageBubble(message: Message) {
+    val header = fsmStageHeader(message.content) ?: return
+    val body = message.content.lines().drop(2).joinToString("\n").trim()
+    val accent = stageColor(header) ?: MaterialTheme.colorScheme.primary
+
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(4.dp, 12.dp, 12.dp, 12.dp))
+            .border(1.dp, accent.copy(alpha = 0.3f), RoundedCornerShape(4.dp, 12.dp, 12.dp, 12.dp))
+            .background(MaterialTheme.colorScheme.surface)
+    ) {
+        // Stage header bar
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .background(accent.copy(alpha = 0.12f))
+                .padding(horizontal = 12.dp, vertical = 6.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+            Text(
+                text = header,
+                style = MaterialTheme.typography.labelMedium,
+                fontWeight = FontWeight.Bold,
+                color = accent
+            )
+            message.meta?.let { meta ->
+                val dur = if (meta.durationMs >= 1000) "${"%.1f".format(meta.durationMs / 1000.0)}s"
+                else "${meta.durationMs}ms"
+                Text(
+                    text = "↓${meta.outputTokens}tok · $dur",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = accent.copy(alpha = 0.6f)
+                )
+            }
+        }
+        // Body content
+        if (body.isNotBlank()) {
+            Text(
+                text = body,
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurface,
+                modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp)
+            )
+        }
     }
 }
 

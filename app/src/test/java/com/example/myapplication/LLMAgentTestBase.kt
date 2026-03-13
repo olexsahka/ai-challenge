@@ -1,17 +1,20 @@
 package com.example.myapplication
 
 import com.example.myapplication.agent.AgentMemory
+import com.example.myapplication.agent.TaskFsmRepository
 import com.example.myapplication.data.db.dao.BranchNodeDao
 import com.example.myapplication.data.db.dao.FactDao
 import com.example.myapplication.data.db.dao.MessageDao
 import com.example.myapplication.data.db.dao.SessionDao
 import com.example.myapplication.data.db.dao.SummaryDao
+import com.example.myapplication.data.db.dao.TaskFsmDao
 import com.example.myapplication.data.db.entity.BranchNodeEntity
 import com.example.myapplication.data.db.entity.FactEntity
 import com.example.myapplication.data.db.entity.MemoryStrategy
 import com.example.myapplication.data.db.entity.MessageEntity
 import com.example.myapplication.data.db.entity.SessionEntity
 import com.example.myapplication.data.db.entity.SummaryEntity
+import com.example.myapplication.data.db.entity.TaskFsmEntity
 import com.example.myapplication.data.repository.UserProfileRepository
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flowOf
@@ -84,6 +87,18 @@ class FakeMessageDao : MessageDao {
 
     override fun observeByNode(nodeId: String): Flow<List<MessageEntity>> =
         flowOf(messages.filter { it.branchNodeId == nodeId }.sortedBy { it.createdAt })
+
+    override suspend fun getBySession(sessionId: String): List<MessageEntity> =
+        messages.filter { it.sessionId == sessionId }.sortedBy { it.createdAt }
+
+    override suspend fun deleteById(id: String) {
+        messages.removeIf { it.id == id }
+    }
+
+    override suspend fun markAsError(id: String) {
+        val idx = messages.indexOfFirst { it.id == id }
+        if (idx >= 0) messages[idx] = messages[idx].copy(isError = true)
+    }
 }
 
 class FakeSummaryDao : SummaryDao {
@@ -205,6 +220,28 @@ fun makeAssistantMessage(
     nodeId: String? = null
 ) = messageEntity("msg-a$idx", sessionId, "Assistant reply $idx", false, idx.toLong() * 2 + 1, nodeId)
 
+class FakeTaskFsmDao : TaskFsmDao {
+    val states = mutableMapOf<String, TaskFsmEntity>()
+
+    override suspend fun upsert(entity: TaskFsmEntity) {
+        states[entity.sessionId] = entity
+    }
+
+    override suspend fun getBySession(sessionId: String): TaskFsmEntity? = states[sessionId]
+
+    override fun observeBySession(sessionId: String): Flow<TaskFsmEntity?> =
+        flowOf(states[sessionId])
+
+    override suspend fun deleteBySession(sessionId: String) {
+        states.remove(sessionId)
+    }
+}
+
+fun makeMockTaskFsmRepository(): TaskFsmRepository {
+    val dao = FakeTaskFsmDao()
+    return TaskFsmRepository(dao)
+}
+
 fun makeMockMemory(contextString: String = ""): AgentMemory {
     val memory = mock<AgentMemory>()
     whenever(memory.toContextString()).thenReturn(contextString)
@@ -214,5 +251,7 @@ fun makeMockMemory(contextString: String = ""): AgentMemory {
 fun makeMockUserProfile(contextString: String = ""): UserProfileRepository {
     val repo = mock<UserProfileRepository>()
     whenever(repo.toContextString()).thenReturn(contextString)
+    whenever(repo.taskMemory).thenReturn(com.example.myapplication.data.repository.TaskMemory())
+    whenever(repo.userInformationContextString()).thenReturn("")
     return repo
 }

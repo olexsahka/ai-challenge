@@ -20,4 +20,13 @@ interface MessageDao {
 
     @Query("SELECT * FROM messages WHERE branchNodeId = :nodeId ORDER BY createdAt ASC")
     suspend fun getByNode(nodeId: String): List<MessageEntity>
+
+    @Query("SELECT * FROM messages WHERE sessionId = :sessionId ORDER BY createdAt ASC")
+    suspend fun getBySession(sessionId: String): List<MessageEntity>
+
+    @Query("DELETE FROM messages WHERE id = :id")
+    suspend fun deleteById(id: String)
+
+    @Query("UPDATE messages SET isError = 1 WHERE id = :id")
+    suspend fun markAsError(id: String)
 }

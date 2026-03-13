@@ -11,7 +11,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 # Build and install on connected device
 ./gradlew installDebug
 
-# Run all unit tests (baseline — должно быть 86 тестов, 0 failures)
+# Run all unit tests (127 тестов, 0 failures)
 ./gradlew :app:testDebugUnitTest
 
 # Run instrumented tests (requires connected device/emulator)
@@ -35,9 +35,9 @@ presentation/  →  agent/  →  data/
 |---|---|
 | `presentation/agent/` | `AgentScreen`, `AgentViewModel`, `AgentUiState` — primary chat UI |
 | `presentation/chat/` | `ChatScreen`, `ChatViewModel` — legacy/alternative chat UI |
-| `agent/` | `LLMAgent` (core request logic), `AgentMemory` (SharedPreferences KV store), `AgentRunner` (ReAct loop agent) |
+| `agent/` | `LLMAgent` (core request logic), `AgentMemory` (SharedPreferences KV store), `AgentRunner` (ReAct loop agent), `TaskFsmRepository` (FSM state machine) |
 | `data/api/` | `AnthropicApi` (Retrofit interface to OpenAI-compatible proxy) |
-| `data/db/` | Room database: DAOs + entities for sessions, messages, summaries, facts, branch nodes |
+| `data/db/` | Room database: DAOs + entities for sessions, messages, summaries, facts, branch nodes, task_fsm |
 | `data/repository/UserProfileRepository.kt` | SharedPreferences store for User Profile and Task Memory settings; `toContextString()` appends them to API instructions when enabled |
 | `domain/` | `Message`, `Settings` models; `ChatRepository` interface; `SendMessageUseCase` |
 | `di/AppModule.kt` | Koin DI — all singletons and viewmodels wired here |
@@ -59,6 +59,23 @@ Each session uses one of five strategies, selected per-session in context settin
 ### `AgentRunner` (ReAct loop)
 
 Standalone ReAct-style agent (max 6 iterations) used independently from `LLMAgent`. Tools: `SEARCH_MEMORY`, `STORE_MEMORY`, `CALCULATE`, `FINAL_ANSWER`. Parses `THOUGHT/ACTION/INPUT` lines from model output.
+
+### Task FSM (`TaskFsmRepository` + `TaskFsmEntity`)
+
+Multi-stage task execution engine. Stages: `PLANNING → EXECUTION (N steps) → VALIDATION → DONE`. Error state: `ERROR`.
+
+**Modes:**
+- **Manual (default):** Each stage requires user confirmation. After planning, agent asks "Proceed to step 1?". After each step asks for next step. User can reply or press "Run All" button.
+- **Auto-run:** All remaining stages execute automatically. Triggered by "Run All" button or `sendMessageWithAutoRun`. Can be stopped mid-run (Stop button → `disableAutoRun`).
+
+**Key fields in `TaskFsmEntity`:** `stage`, `step`, `stepCount`, `expectedAction`, `paused`, `autoRun`, `savedStage/Step/Action` (for pause/resume).
+
+**Error handling:**
+- If planning response has no numbered steps (bad input) → messages marked `isError=true`, FSM set to ERROR, user sees `❌` message.
+- `isError=true` messages are excluded from `buildHistory` (not sent to API).
+- On next `sendMessage` when FSM is ERROR → reset to PLANNING and restart.
+
+**UI (FsmStatusBanner):** Shows current stage with color coding, step progress bar, АВТО badge when auto-running. Buttons: ▶ Run All / ⏸ Stop / ↺ Reset. Button "Запустить все этапы" appears above input field when task memory enabled and user has typed text.
 
 ## Key Constraints
 

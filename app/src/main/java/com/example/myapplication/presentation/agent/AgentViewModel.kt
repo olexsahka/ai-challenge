@@ -12,6 +12,7 @@ import com.example.myapplication.data.db.entity.FactEntity
 import com.example.myapplication.data.db.entity.MemoryStrategy
 import com.example.myapplication.data.db.entity.SessionEntity
 import com.example.myapplication.data.db.entity.SummaryEntity
+import com.example.myapplication.data.db.entity.TaskFsmEntity
 import com.example.myapplication.domain.model.Message
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -38,7 +39,8 @@ data class AgentUiState(
     val branchNodes: List<BranchNodeEntity> = emptyList(),
     val activeNodeId: String? = null,
     val userInformation: UserInformation = UserInformation(),
-    val taskMemory: TaskMemory = TaskMemory()
+    val taskMemory: TaskMemory = TaskMemory(),
+    val taskFsmState: TaskFsmEntity? = null
 )
 
 class AgentViewModel(
@@ -53,6 +55,7 @@ class AgentViewModel(
     private var summaryJob: Job? = null
     private var factsJob: Job? = null
     private var branchJob: Job? = null
+    private var fsmJob: Job? = null
 
     private val _activeNodeId = MutableStateFlow<String?>(null)
 
@@ -213,6 +216,12 @@ class AgentViewModel(
                 _uiState.update { it.copy(branchNodes = nodes) }
             }
         }
+        fsmJob?.cancel()
+        fsmJob = viewModelScope.launch {
+            agent.observeTaskFsm(session.id).collect { fsm ->
+                _uiState.update { it.copy(taskFsmState = fsm) }
+            }
+        }
         if (session.memoryStrategy == MemoryStrategy.BRANCHING.name) {
             viewModelScope.launch {
                 val root = agent.getOrCreateRootNode(session.id)
@@ -233,6 +242,58 @@ class AgentViewModel(
                 taskMemory = userProfileRepository.taskMemory
             )
         }
+    }
+
+    fun initTaskFsm() {
+        val sessionId = _uiState.value.activeSession?.id ?: return
+        viewModelScope.launch { agent.initTaskFsm(sessionId) }
+    }
+
+    fun pauseTask() {
+        val sessionId = _uiState.value.activeSession?.id ?: return
+        viewModelScope.launch { agent.pauseTask(sessionId) }
+    }
+
+    fun resumeTask() {
+        val sessionId = _uiState.value.activeSession?.id ?: return
+        viewModelScope.launch { agent.resumeTask(sessionId) }
+    }
+
+    fun resetTask() {
+        val sessionId = _uiState.value.activeSession?.id ?: return
+        viewModelScope.launch { agent.resetTask(sessionId) }
+    }
+
+    fun runAllStages() {
+        val sessionId = _uiState.value.activeSession?.id ?: return
+        if (_uiState.value.isLoading) return
+        _uiState.update { it.copy(isLoading = true, error = null) }
+        viewModelScope.launch {
+            agent.enableAutoRun(sessionId)
+            agent.continueFromCurrentStage(sessionId).onFailure { e ->
+                _uiState.update { it.copy(error = e.message ?: "Error") }
+            }
+            _uiState.update { it.copy(isLoading = false) }
+            refreshMemories()
+        }
+    }
+
+    fun sendMessageWithAutoRun(text: String) {
+        val sessionId = _uiState.value.activeSession?.id ?: return
+        if (text.isBlank() || _uiState.value.isLoading) return
+        _uiState.update { it.copy(isLoading = true, error = null) }
+        viewModelScope.launch {
+            agent.sendMessageAutoRun(sessionId, text).onFailure { e ->
+                _uiState.update { it.copy(error = e.message ?: "Error") }
+            }
+            _uiState.update { it.copy(isLoading = false) }
+            refreshMemories()
+        }
+    }
+
+    fun stopAutoRun() {
+        val sessionId = _uiState.value.activeSession?.id ?: return
+        viewModelScope.launch { agent.disableAutoRun(sessionId) }
     }
 
     fun saveUserInformation(info: UserInformation) {

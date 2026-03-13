@@ -27,5 +27,6 @@ data class MessageEntity(
     val outputTokens: Int = 0,
     val durationMs: Long = 0,
     val model: String = "",
-    val branchNodeId: String? = null
+    val branchNodeId: String? = null,
+    val isError: Boolean = false
 )

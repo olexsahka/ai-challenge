@@ -148,6 +148,26 @@ Also stored globally in `UserProfileRepository`. The context settings bottom she
 - **Task description** — detailed description of the task.
 - **Task Memory Usage** toggle — when enabled, task name and description are appended to every request's instructions under "Current task:".
 
+### Task FSM (Finite State Machine)
+
+When Task Memory is enabled, `LLMAgent` drives execution through a structured FSM stored in `TaskFsmEntity`:
+
+```
+PLANNING → EXECUTION (step 1..N) → VALIDATION → DONE
+                                              ↘ ERROR (on bad input)
+```
+
+**Manual mode (default):** Each stage requires explicit user confirmation. After each API call, a prompt message is saved asking the user to proceed to the next step.
+
+**Auto-run mode:** Triggered via the "Run All" button (▶) in the FSM banner or `sendMessageAutoRun`. All stages execute automatically in sequence. The Stop button (⏸) sets `autoRun=false`; the loop checks this flag between API calls and halts at the current step.
+
+**Error handling:** If the planning response contains no numbered steps, the FSM transitions to `ERROR` stage, the bad messages are marked `isError=true` (excluded from future API history but still visible in UI), and the user is prompted to retry. On the next `sendMessage`, ERROR stage triggers a full FSM reset and fresh planning.
+
+**Key classes:**
+- `TaskFsmEntity` — Room entity holding `stage`, `step`, `stepCount`, `autoRun`, `paused`, and saved-state fields for pause/resume
+- `TaskFsmRepository` — state transition logic: `transitionTo`, `markDone`, `setError`, `pause/resume`, `enableAutoRun/disableAutoRun`, `reset`
+- `LLMAgent.runFsmStep()` — executes one FSM stage per call; loops automatically only when `autoRun=true`
+
 ### Response metadata (`MessageMeta`)
 
 Every assistant message carries:
@@ -185,7 +205,7 @@ Accessible via the gear icon in the top bar. Stored in the `sessions` table:
 
 | Фаза | Статус |
 |---|---|
-| Фаза 0 — Baseline тесты | ✅ Завершена (86 тестов) |
+| Фаза 0 — Baseline тесты | ✅ Завершена (127 тестов) |
 | Фаза 1 — Domain слой | 🔲 Не начата |
 | Фаза 2 — Platform абстракции | 🔲 Не начата |
 | Фаза 3 — Shared KMP модуль | 🔲 Не начата |
@@ -196,14 +216,16 @@ Accessible via the gear icon in the top bar. Stored in the `sessions` table:
 
 ```
 app/src/test/
-├── AgentRunnerTest.kt          — ReAct loop, все действия, maxIterations
-├── BuildHistoryTest.kt         — все 5 стратегий памяти
-├── BuildInstructionsTest.kt    — сборка системного промпта
-├── SendMessageTest.kt          — полный flow sendMessage + persistence
-├── BuildBranchHistoryTest.kt   — branching history по ancestor chain
-├── AgentMemoryTest.kt          — KV store логика
-├── UserProfileRepositoryTest.kt — profile/task context строки
-└── LLMAgentTestBase.kt         — Fake DAO инфраструктура
+├── AgentRunnerTest.kt           — ReAct loop, все действия, maxIterations (16 тестов)
+├── BuildHistoryTest.kt          — все 5 стратегий памяти (12 тестов)
+├── BuildInstructionsTest.kt     — сборка системного промпта (11 тестов)
+├── SendMessageTest.kt           — полный flow sendMessage + persistence (11 тестов)
+├── BuildBranchHistoryTest.kt    — branching history по ancestor chain (9 тестов)
+├── AgentMemoryTest.kt           — KV store логика (10 тестов)
+├── UserProfileRepositoryTest.kt — profile/task context строки (11 тестов)
+├── TaskFsmRepositoryTest.kt     — FSM state transitions, pause/resume, autoRun, error (24 тестов)
+├── FsmLLMAgentTest.kt           — FSM интеграция в LLMAgent: ручной/авто режим, обработка ошибок (14 тестов)
+└── LLMAgentTestBase.kt          — Fake DAO инфраструктура (без тестов)
 ```
 
 ---

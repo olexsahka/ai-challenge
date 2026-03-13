@@ -42,7 +42,8 @@ class BuildBranchHistoryTest {
         summaryDao = summaryDao,
         factDao = factDao,
         branchNodeDao = branchNodeDao,
-        userProfileRepository = makeMockUserProfile()
+        userProfileRepository = makeMockUserProfile(),
+        taskFsmRepository = makeMockTaskFsmRepository()
     )
 
     private fun branchNode(id: String, sessionId: String, parentId: String? = null, label: String = "Node") =

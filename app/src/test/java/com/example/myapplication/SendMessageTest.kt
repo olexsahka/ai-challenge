@@ -40,7 +40,8 @@ class SendMessageTest {
         summaryDao = summaryDao,
         factDao = factDao,
         branchNodeDao = branchNodeDao,
-        userProfileRepository = makeMockUserProfile(profileContext)
+        userProfileRepository = makeMockUserProfile(profileContext),
+        taskFsmRepository = makeMockTaskFsmRepository()
     )
 
     // -------------------------------------------------------------------------

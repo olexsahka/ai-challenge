@@ -15,6 +15,8 @@ import com.example.myapplication.data.db.entity.MessageEntity
 import com.example.myapplication.data.db.entity.MemoryStrategy
 import com.example.myapplication.data.db.entity.SessionEntity
 import com.example.myapplication.data.db.entity.SummaryEntity
+import com.example.myapplication.data.db.entity.TaskFsmEntity
+import com.example.myapplication.data.db.entity.TaskStage
 import com.example.myapplication.domain.model.Message
 import com.example.myapplication.domain.model.MessageMeta
 import kotlinx.coroutines.flow.Flow
@@ -36,7 +38,8 @@ class LLMAgent(
     private val summaryDao: SummaryDao,
     private val factDao: FactDao,
     private val branchNodeDao: BranchNodeDao,
-    private val userProfileRepository: UserProfileRepository
+    private val userProfileRepository: UserProfileRepository,
+    private val taskFsmRepository: TaskFsmRepository
 ) {
     private val titleFormat = SimpleDateFormat("dd MMM yyyy, HH:mm", Locale.getDefault())
 
@@ -261,6 +264,45 @@ class LLMAgent(
     fun observeSummary(sessionId: String): Flow<com.example.myapplication.data.db.entity.SummaryEntity?> =
         summaryDao.observeBySession(sessionId)
 
+    fun observeTaskFsm(sessionId: String) = taskFsmRepository.observe(sessionId)
+
+    suspend fun pauseTask(sessionId: String) = taskFsmRepository.pause(sessionId)
+
+    suspend fun resumeTask(sessionId: String) = taskFsmRepository.resume(sessionId)
+
+    suspend fun resetTask(sessionId: String) = taskFsmRepository.reset(sessionId)
+
+    suspend fun enableAutoRun(sessionId: String) = taskFsmRepository.enableAutoRun(sessionId)
+
+    suspend fun disableAutoRun(sessionId: String) = taskFsmRepository.disableAutoRun(sessionId)
+
+    suspend fun initTaskFsm(sessionId: String) = taskFsmRepository.getOrCreate(sessionId)
+
+    suspend fun sendMessageAutoRun(sessionId: String, userText: String): Result<Message> {
+        val session = sessionDao.getById(sessionId)
+            ?: return Result.failure(Exception("Session not found"))
+        val userMsg = MessageEntity(
+            id = UUID.randomUUID().toString(),
+            sessionId = sessionId,
+            content = userText,
+            isFromUser = true,
+            createdAt = System.currentTimeMillis()
+        )
+        messageDao.insert(userMsg)
+        // Create fresh FSM with autoRun enabled
+        val fsm = TaskFsmEntity(sessionId = sessionId, autoRun = true)
+        taskFsmRepository.upsert(fsm)
+        return runFsmStep(session, userText, fsm)
+    }
+
+    suspend fun continueFromCurrentStage(sessionId: String): Result<Message> {
+        val session = sessionDao.getById(sessionId)
+            ?: return Result.failure(Exception("Session not found"))
+        val fsm = taskFsmRepository.get(sessionId)
+            ?: return Result.failure(Exception("No active FSM"))
+        return runFsmStep(session, "", fsm)
+    }
+
     fun getMemories(): List<MemoryEntry> = memory.recallAll()
 
     fun forgetMemory(key: String) = memory.forget(key)
@@ -279,6 +321,15 @@ class LLMAgent(
             createdAt = System.currentTimeMillis()
         )
         messageDao.insert(userMsg)
+
+        var fsm = taskFsmRepository.get(sessionId)
+        // Auto-create FSM on first message if task memory is enabled and FSM doesn't exist yet
+        if (fsm == null && userProfileRepository.taskMemory.enabled) {
+            fsm = taskFsmRepository.getOrCreate(sessionId)
+        }
+        if (fsm != null && !fsm.paused) {
+            return runFsmStep(session, userText, fsm)
+        }
 
         return try {
             val instructions = buildInstructions(session)
@@ -343,18 +394,322 @@ class LLMAgent(
         }
     }
 
-    private fun buildInstructions(session: SessionEntity): String {
+    /**
+     * Executes the current FSM stage/step (one step at a time by default).
+     * If autoRun is enabled, continues through all remaining steps automatically.
+     * After each step, if not autoRun, appends a prompt asking the user to proceed.
+     */
+    private suspend fun runFsmStep(session: SessionEntity, userText: String, fsm: TaskFsmEntity): Result<Message> {
+        val sessionId = session.id
+        val taskMemory = userProfileRepository.taskMemory
+        val autoRun = fsm.autoRun
+
+        val currentStage = runCatching { TaskStage.valueOf(fsm.stage) }.getOrElse { TaskStage.PLANNING }
+
+        // If already DONE, just do a normal message
+        if (currentStage == TaskStage.DONE) {
+            return sendNormalMessage(session, taskMemory)
+        }
+
+        // If ERROR — reset FSM and restart planning with the new message
+        if (currentStage == TaskStage.ERROR) {
+            taskFsmRepository.reset(sessionId)
+            val freshFsm = taskFsmRepository.get(sessionId) ?: TaskFsmEntity(sessionId = sessionId, autoRun = fsm.autoRun)
+            return runFsmStep(session, userText, freshFsm)
+        }
+
+        // PLANNING stage: generate plan if not done yet
+        if (currentStage == TaskStage.PLANNING) {
+            taskFsmRepository.transitionTo(sessionId, TaskStage.PLANNING, 1, "generate_plan")
+            val planResult = callApiForStage(session, taskMemory, stageLabel = "📋 Planning")
+                ?: run { taskFsmRepository.setError(sessionId); return Result.failure(Exception("Planning stage failed")) }
+            saveAssistantMessage(session, planResult)
+            if (sessionDao.countAssistantMessages(sessionId) == 1) updateSessionTitle(sessionId, planResult.text)
+
+            val stepCount = planResult.text.lines()
+                .count { it.trim().matches(Regex("^\\d+\\..*")) }
+
+            // No numbered steps — model couldn't generate a plan (bad input)
+            if (stepCount == 0) {
+                // Mark planning response and user message as errors (exclude from history)
+                val allMsgs = messageDao.getBySession(sessionId)
+                allMsgs.takeLast(2).forEach { messageDao.markAsError(it.id) }
+                taskFsmRepository.setError(sessionId)
+                val errorEntity = MessageEntity(
+                    id = UUID.randomUUID().toString(),
+                    sessionId = sessionId,
+                    content = "❌ Не удалось составить план. Пожалуйста, опишите задачу подробнее.",
+                    isFromUser = false,
+                    createdAt = System.currentTimeMillis(),
+                    isError = true
+                )
+                messageDao.insert(errorEntity)
+                return Result.success(Message(id = errorEntity.id, content = errorEntity.content, isFromUser = false))
+            }
+
+            // Transition to EXECUTION step 1, save stepCount
+            taskFsmRepository.transitionTo(sessionId, TaskStage.EXECUTION, 1, "execute_step", stepCount)
+
+            if (!autoRun) {
+                // Ask user to confirm next step
+                val promptEntity = savePromptMessage(session, "Готов к выполнению плана из $stepCount шагов. Приступить к шагу 1?")
+                return Result.success(Message(id = promptEntity.id, content = promptEntity.content, isFromUser = false))
+            }
+            // autoRun: fall through to execute all steps
+        }
+
+        // EXECUTION stage
+        var currentFsm = taskFsmRepository.get(sessionId) ?: fsm
+        if (runCatching { TaskStage.valueOf(currentFsm.stage) }.getOrNull() == TaskStage.EXECUTION) {
+            val stepCount = currentFsm.stepCount.coerceAtLeast(1)
+            val startStep = currentFsm.step
+
+            if (autoRun) {
+                // Execute all remaining steps, stop if autoRun was disabled (Stop button)
+                for (step in startStep..stepCount) {
+                    currentFsm = taskFsmRepository.get(sessionId) ?: break
+                    if (!currentFsm.autoRun) {
+                        // User pressed Stop — stay at current step
+                        taskFsmRepository.transitionTo(sessionId, TaskStage.EXECUTION, step, "execute_step", stepCount)
+                        val promptEntity = savePromptMessage(session, "Авто-запуск остановлен на шаге $step/$stepCount. Продолжить?")
+                        return Result.success(Message(id = promptEntity.id, content = promptEntity.content, isFromUser = false))
+                    }
+                    taskFsmRepository.transitionTo(sessionId, TaskStage.EXECUTION, step, "execute_step", stepCount)
+                    val stepResult = callApiForStage(session, taskMemory, stageLabel = "⚙️ Шаг $step/$stepCount")
+                        ?: run { taskFsmRepository.setError(sessionId); return Result.failure(Exception("Execution step $step failed")) }
+                    saveAssistantMessage(session, stepResult)
+                }
+            } else {
+                // Execute only the current step
+                taskFsmRepository.transitionTo(sessionId, TaskStage.EXECUTION, startStep, "execute_step", stepCount)
+                val stepResult = callApiForStage(session, taskMemory, stageLabel = "⚙️ Шаг $startStep/$stepCount")
+                    ?: run { taskFsmRepository.setError(sessionId); return Result.failure(Exception("Execution step $startStep failed")) }
+                saveAssistantMessage(session, stepResult)
+
+                if (startStep < stepCount) {
+                    taskFsmRepository.transitionTo(sessionId, TaskStage.EXECUTION, startStep + 1, "execute_step", stepCount)
+                    val promptEntity = savePromptMessage(session, "Шаг $startStep выполнен. Приступить к шагу ${startStep + 1}/$stepCount?")
+                    return Result.success(Message(id = promptEntity.id, content = promptEntity.content, isFromUser = false))
+                }
+                // Last step done — move to VALIDATION
+            }
+
+            // Check if autoRun was stopped after last step
+            currentFsm = taskFsmRepository.get(sessionId) ?: fsm
+            if (!currentFsm.autoRun && autoRun) {
+                return Result.success(Message(id = UUID.randomUUID().toString(), content = "Авто-запуск остановлен.", isFromUser = false))
+            }
+
+            taskFsmRepository.transitionTo(sessionId, TaskStage.VALIDATION, 1, "validate_results")
+
+            if (!autoRun) {
+                val promptEntity = savePromptMessage(session, "Все шаги выполнены. Приступить к валидации?")
+                return Result.success(Message(id = promptEntity.id, content = promptEntity.content, isFromUser = false))
+            }
+        }
+
+        // VALIDATION stage
+        currentFsm = taskFsmRepository.get(sessionId) ?: fsm
+        if (runCatching { TaskStage.valueOf(currentFsm.stage) }.getOrNull() == TaskStage.VALIDATION) {
+            taskFsmRepository.transitionTo(sessionId, TaskStage.VALIDATION, 1, "validate_results")
+            val validationResult = callApiForStage(session, taskMemory, stageLabel = "✅ Валидация")
+                ?: run { taskFsmRepository.setError(sessionId); return Result.failure(Exception("Validation stage failed")) }
+            saveAssistantMessage(session, validationResult)
+
+            val validationFailed = validationResult.text.lowercase().let {
+                it.contains("validation failed") || it.contains("needs correction") || it.contains("error detected")
+            }
+            if (validationFailed) {
+                taskFsmRepository.validationFailed(sessionId)
+                val stepCount = currentFsm.stepCount.coerceAtLeast(1)
+                taskFsmRepository.transitionTo(sessionId, TaskStage.EXECUTION, 1, "execute_step", stepCount)
+                val retryResult = callApiForStage(session, taskMemory, stageLabel = "⚙️ Повторное выполнение")
+                    ?: return Result.failure(Exception("Retry execution failed"))
+                saveAssistantMessage(session, retryResult)
+                taskFsmRepository.transitionTo(sessionId, TaskStage.VALIDATION, 1, "validate_results")
+                val revalidation = callApiForStage(session, taskMemory, stageLabel = "✅ Повторная валидация")
+                    ?: return Result.failure(Exception("Revalidation failed"))
+                saveAssistantMessage(session, revalidation)
+            }
+
+            taskFsmRepository.markDone(sessionId)
+
+            if (!autoRun) {
+                val promptEntity = savePromptMessage(session, "Валидация пройдена. Завершить задачу?")
+                return Result.success(Message(id = promptEntity.id, content = promptEntity.content, isFromUser = false))
+            }
+        }
+
+        // DONE stage
+        taskFsmRepository.markDone(sessionId)
+        val doneResult = callApiForStage(session, taskMemory, stageLabel = "🏁 Готово")
+            ?: return Result.failure(Exception("Done stage failed"))
+        val doneEntity = saveAssistantMessage(session, doneResult)
+
+        return Result.success(
+            Message(
+                id = doneEntity.id,
+                content = doneResult.text,
+                isFromUser = false,
+                meta = MessageMeta(
+                    inputTokens = doneResult.inputTokens,
+                    outputTokens = doneResult.outputTokens,
+                    durationMs = doneResult.durationMs,
+                    model = session.model
+                )
+            )
+        )
+    }
+
+    private suspend fun sendNormalMessage(session: SessionEntity, taskMemory: com.example.myapplication.data.repository.TaskMemory): Result<Message> {
+        return try {
+            val instructions = buildInstructions(session)
+            val history = buildHistory(session)
+            val request = ChatRequest(
+                model = session.model,
+                instructions = instructions.takeIf { it.isNotBlank() },
+                input = history,
+                temperature = if (session.temperature == 1.0f) null else session.temperature
+            )
+            val startMs = System.currentTimeMillis()
+            val response = api.sendMessage(request)
+            val durationMs = System.currentTimeMillis() - startMs
+            val text = response.output
+                .firstOrNull { it.type == "message" }
+                ?.content
+                ?.firstOrNull { it.type == "output_text" }
+                ?.text ?: return Result.failure(Exception("Empty response"))
+            val entity = MessageEntity(
+                id = UUID.randomUUID().toString(),
+                sessionId = session.id,
+                content = text,
+                isFromUser = false,
+                createdAt = System.currentTimeMillis(),
+                inputTokens = response.usage?.input_tokens ?: 0,
+                outputTokens = response.usage?.output_tokens ?: 0,
+                durationMs = durationMs,
+                model = session.model
+            )
+            messageDao.insert(entity)
+            Result.success(Message(id = entity.id, content = text, isFromUser = false, meta = MessageMeta(entity.inputTokens, entity.outputTokens, durationMs, session.model)))
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
+    private suspend fun savePromptMessage(session: SessionEntity, text: String): MessageEntity {
+        val entity = MessageEntity(
+            id = UUID.randomUUID().toString(),
+            sessionId = session.id,
+            content = text,
+            isFromUser = false,
+            createdAt = System.currentTimeMillis()
+        )
+        messageDao.insert(entity)
+        return entity
+    }
+
+    private data class StageResponse(
+        val text: String,
+        val inputTokens: Int,
+        val outputTokens: Int,
+        val durationMs: Long
+    )
+
+    private suspend fun callApiForStage(
+        session: SessionEntity,
+        taskMemory: com.example.myapplication.data.repository.TaskMemory,
+        stageLabel: String
+    ): StageResponse? {
+        val fsm = taskFsmRepository.get(session.id) ?: return null
+        val instructions = buildInstructionsWithFsm(session, fsm, taskMemory)
+        val history = buildHistory(session)
+        val request = ChatRequest(
+            model = session.model,
+            instructions = instructions.takeIf { it.isNotBlank() },
+            input = history,
+            temperature = if (session.temperature == 1.0f) null else session.temperature
+        )
+        return try {
+            val startMs = System.currentTimeMillis()
+            val response = api.sendMessage(request)
+            val durationMs = System.currentTimeMillis() - startMs
+            val raw = response.output
+                .firstOrNull { it.type == "message" }
+                ?.content
+                ?.firstOrNull { it.type == "output_text" }
+                ?.text ?: return null
+            val text = "**$stageLabel**\n\n$raw"
+            StageResponse(
+                text = text,
+                inputTokens = response.usage?.input_tokens ?: 0,
+                outputTokens = response.usage?.output_tokens ?: 0,
+                durationMs = durationMs
+            )
+        } catch (e: Exception) {
+            null
+        }
+    }
+
+    private suspend fun saveAssistantMessage(session: SessionEntity, result: StageResponse): MessageEntity {
+        val entity = MessageEntity(
+            id = UUID.randomUUID().toString(),
+            sessionId = session.id,
+            content = result.text,
+            isFromUser = false,
+            createdAt = System.currentTimeMillis(),
+            inputTokens = result.inputTokens,
+            outputTokens = result.outputTokens,
+            durationMs = result.durationMs,
+            model = session.model
+        )
+        messageDao.insert(entity)
+        return entity
+    }
+
+    private suspend fun updateSessionTitle(sessionId: String, text: String) {
+        val autoTitle = text.split(Regex("(?<=[.!?])\\s+")).firstOrNull()
+            ?.trim()?.take(50) ?: text.take(50)
+        sessionDao.updateTitle(sessionId, autoTitle)
+    }
+
+    private fun buildInstructionsWithFsm(
+        session: SessionEntity,
+        fsm: com.example.myapplication.data.db.entity.TaskFsmEntity,
+        taskMemory: com.example.myapplication.data.repository.TaskMemory
+    ): String {
         val parts = mutableListOf<String>()
         if (session.systemPrompt.isNotBlank()) parts.add(session.systemPrompt)
         val memCtx = memory.toContextString()
         if (memCtx.isNotBlank()) parts.add(memCtx)
-        val profileCtx = userProfileRepository.toContextString()
-        if (profileCtx.isNotBlank()) parts.add(profileCtx)
+        parts.add(taskFsmRepository.toInstructionsBlock(fsm, taskMemory.takeIf { it.enabled }))
+        val userInfoCtx = userProfileRepository.userInformationContextString()
+        if (userInfoCtx.isNotBlank()) parts.add(userInfoCtx)
+        return parts.joinToString("\n\n")
+    }
+
+    private suspend fun buildInstructions(session: SessionEntity): String {
+        val parts = mutableListOf<String>()
+        if (session.systemPrompt.isNotBlank()) parts.add(session.systemPrompt)
+        val memCtx = memory.toContextString()
+        if (memCtx.isNotBlank()) parts.add(memCtx)
+        val fsm = taskFsmRepository.get(session.id)
+        val taskMemory = userProfileRepository.taskMemory
+        if (fsm != null) {
+            // FSM block absorbs task memory — no need to duplicate it via UserProfileRepository
+            parts.add(taskFsmRepository.toInstructionsBlock(fsm, taskMemory.takeIf { it.enabled }))
+            // Still include user information (non-task part)
+            val userInfoCtx = userProfileRepository.userInformationContextString()
+            if (userInfoCtx.isNotBlank()) parts.add(userInfoCtx)
+        } else {
+            val profileCtx = userProfileRepository.toContextString()
+            if (profileCtx.isNotBlank()) parts.add(profileCtx)
+        }
         return parts.joinToString("\n\n")
     }
 
     private suspend fun buildHistory(session: SessionEntity): List<InputMessage> {
-        val all = messageDao.observeBySession(session.id).first()
+        val all = messageDao.observeBySession(session.id).first().filter { !it.isError }
 
         val strategy = runCatching { MemoryStrategy.valueOf(session.memoryStrategy) }.getOrDefault(MemoryStrategy.FULL)
         if (strategy == MemoryStrategy.SLIDING_WINDOW) {

@@ -2,6 +2,7 @@ package com.example.myapplication.di
 
 import com.example.myapplication.agent.AgentMemory
 import com.example.myapplication.agent.LLMAgent
+import com.example.myapplication.agent.TaskFsmRepository
 import com.example.myapplication.data.api.AnthropicApi
 import com.example.myapplication.data.db.AppDatabase
 import com.example.myapplication.data.repository.ChatRepositoryImpl
@@ -67,9 +68,11 @@ val appModule = module {
     single { get<AppDatabase>().summaryDao() }
     single { get<AppDatabase>().factDao() }
     single { get<AppDatabase>().branchNodeDao() }
+    single { get<AppDatabase>().taskFsmDao() }
     single { AgentMemory(androidContext()) }
     single { UserProfileRepository(androidContext()) }
-    single { LLMAgent(get(), get(), get(), get(), get(), get(), get(), get()) }
+    single { TaskFsmRepository(get()) }
+    single { LLMAgent(get(), get(), get(), get(), get(), get(), get(), get(), get()) }
 
     viewModel { ChatViewModel(get(), get(), get(), get()) }
     viewModel { AgentViewModel(get(), get()) }

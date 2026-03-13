@@ -40,7 +40,8 @@ class BuildHistoryTest {
         summaryDao = summaryDao,
         factDao = factDao,
         branchNodeDao = branchNodeDao,
-        userProfileRepository = makeMockUserProfile()
+        userProfileRepository = makeMockUserProfile(),
+        taskFsmRepository = makeMockTaskFsmRepository()
     )
 
     @Before
@@ -148,7 +149,7 @@ class BuildHistoryTest {
             )
         )
         LLMAgent(seqApi, sessionDao, messageDao, makeMockMemory(), summaryDao, factDao,
-            branchNodeDao, makeMockUserProfile()).sendMessage(session.id, "new")
+            branchNodeDao, makeMockUserProfile(), makeMockTaskFsmRepository()).sendMessage(session.id, "new")
 
         val mainRequest = seqApi.requests.first()
         // No facts — only last stickyFactsN=3 from 11 messages = 3
@@ -174,7 +175,7 @@ class BuildHistoryTest {
             )
         )
         LLMAgent(seqApi, sessionDao, messageDao, makeMockMemory(), summaryDao, factDao,
-            branchNodeDao, makeMockUserProfile()).sendMessage(session.id, "new")
+            branchNodeDao, makeMockUserProfile(), makeMockTaskFsmRepository()).sendMessage(session.id, "new")
 
         val sentInput = seqApi.requests.first().input
         // facts user msg + facts assistant ack + last 2 existing + 1 new user = 5

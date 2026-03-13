@@ -54,6 +54,19 @@ class UserProfileRepository(context: Context) {
             putBoolean(KEY_TASK_ENABLED, value.enabled)
         }
 
+    fun userInformationContextString(): String {
+        val info = userInformation
+        val infoLines = mutableListOf<String>()
+        if (info.name.isNotBlank()) infoLines.add("Name: ${info.name.trim()}")
+        if (info.occupation.isNotBlank()) infoLines.add("Occupation: ${info.occupation.trim()}")
+        if (info.language.isNotBlank()) infoLines.add("Language: ${info.language.trim()}")
+        if (info.responseStyle.isNotBlank()) infoLines.add("Response style: ${info.responseStyle.trim()}")
+        if (info.responseFormat.isNotBlank()) infoLines.add("Response format: ${info.responseFormat.trim()}")
+        if (info.constraints.isNotBlank()) infoLines.add("Constraints: ${info.constraints.trim()}")
+        if (info.additionalNotes.isNotBlank()) infoLines.add("Notes: ${info.additionalNotes.trim()}")
+        return if (infoLines.isNotEmpty()) "User information:\n${infoLines.joinToString("\n")}" else ""
+    }
+
     fun toContextString(): String {
         val parts = mutableListOf<String>()
 
