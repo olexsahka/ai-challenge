@@ -68,13 +68,6 @@ class UserProfileRepositoryTest {
     }
 
     @Test
-    fun `toContextString when constraints set includes constraints line`() {
-        repo.userInformation = UserInformation(constraints = "no code")
-        val result = repo.toContextString()
-        assertTrue(result.contains("Constraints: no code"))
-    }
-
-    @Test
     fun `toContextString when additionalNotes set includes notes line`() {
         repo.userInformation = UserInformation(additionalNotes = "be friendly")
         val result = repo.toContextString()
@@ -168,7 +161,6 @@ class TestableUserProfileRepository {
         if (info.language.isNotBlank()) infoLines.add("Language: ${info.language.trim()}")
         if (info.responseStyle.isNotBlank()) infoLines.add("Response style: ${info.responseStyle.trim()}")
         if (info.responseFormat.isNotBlank()) infoLines.add("Response format: ${info.responseFormat.trim()}")
-        if (info.constraints.isNotBlank()) infoLines.add("Constraints: ${info.constraints.trim()}")
         if (info.additionalNotes.isNotBlank()) infoLines.add("Notes: ${info.additionalNotes.trim()}")
         if (infoLines.isNotEmpty()) {
             parts.add("User information:\n${infoLines.joinToString("\n")}")

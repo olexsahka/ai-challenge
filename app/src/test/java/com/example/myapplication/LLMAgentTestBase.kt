@@ -15,6 +15,8 @@ import com.example.myapplication.data.db.entity.MessageEntity
 import com.example.myapplication.data.db.entity.SessionEntity
 import com.example.myapplication.data.db.entity.SummaryEntity
 import com.example.myapplication.data.db.entity.TaskFsmEntity
+import com.example.myapplication.data.repository.Constraints
+import com.example.myapplication.data.repository.ConstraintsRepository
 import com.example.myapplication.data.repository.UserProfileRepository
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flowOf
@@ -253,5 +255,12 @@ fun makeMockUserProfile(contextString: String = ""): UserProfileRepository {
     whenever(repo.toContextString()).thenReturn(contextString)
     whenever(repo.taskMemory).thenReturn(com.example.myapplication.data.repository.TaskMemory())
     whenever(repo.userInformationContextString()).thenReturn("")
+    return repo
+}
+
+fun makeMockConstraintsRepository(enabled: Boolean = false, rules: String = ""): ConstraintsRepository {
+    val repo = mock<ConstraintsRepository>()
+    whenever(repo.constraints).thenReturn(Constraints(rules = rules, enabled = enabled))
+    whenever(repo.toContextBlock()).thenReturn(if (enabled && rules.isNotBlank()) "Agent constraints (MUST NEVER violate):\n$rules" else "")
     return repo
 }

@@ -8,6 +8,7 @@ import com.example.myapplication.data.db.dao.FactDao
 import com.example.myapplication.data.db.dao.MessageDao
 import com.example.myapplication.data.db.dao.SessionDao
 import com.example.myapplication.data.db.dao.SummaryDao
+import com.example.myapplication.data.repository.ConstraintsRepository
 import com.example.myapplication.data.repository.UserProfileRepository
 import com.example.myapplication.data.db.entity.BranchNodeEntity
 import com.example.myapplication.data.db.entity.FactEntity
@@ -39,7 +40,8 @@ class LLMAgent(
     private val factDao: FactDao,
     private val branchNodeDao: BranchNodeDao,
     private val userProfileRepository: UserProfileRepository,
-    private val taskFsmRepository: TaskFsmRepository
+    private val taskFsmRepository: TaskFsmRepository,
+    private val constraintsRepository: ConstraintsRepository
 ) {
     private val titleFormat = SimpleDateFormat("dd MMM yyyy, HH:mm", Locale.getDefault())
 
@@ -395,6 +397,114 @@ class LLMAgent(
     }
 
     /**
+     * Checks if the userText violates any active constraints by asking the LLM.
+     * Returns a non-null violation description string if violated, null if OK.
+     */
+    private suspend fun checkConstraintViolation(session: SessionEntity, userText: String): String? {
+        val constraints = constraintsRepository.constraints
+        if (!constraints.enabled || constraints.rules.isBlank() || userText.isBlank()) return null
+
+        val prompt = """You are a constraints checker. Given the list of agent constraints and a user request, determine if the request violates any constraint.
+
+Agent constraints:
+${constraints.rules.trim()}
+
+User request:
+$userText
+
+Reply with EXACTLY one of:
+- "OK" if the request does not violate any constraint.
+- "VIOLATION: <constraint description>" if it violates a constraint (replace <constraint description> with the specific rule violated).
+
+Reply with nothing else."""
+
+        val request = ChatRequest(
+            model = session.model,
+            instructions = null,
+            input = listOf(InputMessage(role = "user", content = prompt)),
+            temperature = null
+        )
+        val response = runCatching { api.sendMessage(request) }.getOrNull() ?: return null
+        val raw = response.output
+            .firstOrNull { it.type == "message" }
+            ?.content
+            ?.firstOrNull { it.type == "output_text" }
+            ?.text?.trim() ?: return null
+
+        return if (raw.startsWith("VIOLATION:", ignoreCase = true)) {
+            raw.removePrefix("VIOLATION:").removePrefix("violation:").trim()
+        } else null
+    }
+
+    /**
+     * Saves a constraint violation error message, sets FSM to ERROR, and returns the error result.
+     */
+    private suspend fun handleConstraintViolation(
+        session: SessionEntity,
+        violationDesc: String,
+        originalRequest: String
+    ): Result<Message> {
+        taskFsmRepository.setError(session.id)
+
+        // Ask LLM to suggest an alternative request that does not violate constraints
+        val constraints = constraintsRepository.constraints
+        val alternativePrompt = """The user sent a request that violates an agent constraint.
+
+Agent constraints:
+${constraints.rules.trim()}
+
+Violated constraint: $violationDesc
+
+User's original request:
+$originalRequest
+
+Suggest a concrete alternative request that:
+1. Achieves a similar goal to the original request.
+2. Does NOT violate any of the agent constraints listed above.
+
+Reply with only the suggested alternative request text, without any preamble."""
+
+        val altRequest = ChatRequest(
+            model = session.model,
+            instructions = null,
+            input = listOf(InputMessage(role = "user", content = alternativePrompt)),
+            temperature = null
+        )
+        val alternativeSuggestion = runCatching { api.sendMessage(altRequest) }
+            .getOrNull()
+            ?.output
+            ?.firstOrNull { it.type == "message" }
+            ?.content
+            ?.firstOrNull { it.type == "output_text" }
+            ?.text
+            ?.trim()
+
+        val content = buildString {
+            appendLine("❌ Ошибка: действие нарушает ограничение «$violationDesc»")
+            appendLine()
+            appendLine("Варианты:")
+            appendLine("1. Изменить ограничения, чтобы разрешить это действие.")
+            if (!alternativeSuggestion.isNullOrBlank()) {
+                appendLine("2. Использовать альтернативный запрос:")
+                appendLine()
+                appendLine(alternativeSuggestion)
+            } else {
+                appendLine("2. Предложить альтернативный запрос, не нарушающий ограничения.")
+            }
+        }.trim()
+
+        val errorEntity = MessageEntity(
+            id = UUID.randomUUID().toString(),
+            sessionId = session.id,
+            content = content,
+            isFromUser = false,
+            createdAt = System.currentTimeMillis()
+        )
+        messageDao.insert(errorEntity)
+        return Result.success(Message(id = errorEntity.id, content = content, isFromUser = false))
+    }
+
+    /**
      * Executes the current FSM stage/step (one step at a time by default).
      * If autoRun is enabled, continues through all remaining steps automatically.
      * After each step, if not autoRun, appends a prompt asking the user to proceed.
@@ -418,11 +528,25 @@ class LLMAgent(
             return runFsmStep(session, userText, freshFsm)
         }
 
+        // Check constraints before any action (on initial user message)
+        if (currentStage == TaskStage.PLANNING && userText.isNotBlank()) {
+            val violation = checkConstraintViolation(session, userText)
+            if (violation != null) {
+                return handleConstraintViolation(session, violation, userText)
+            }
+        }
+
         // PLANNING stage: generate plan if not done yet
         if (currentStage == TaskStage.PLANNING) {
             taskFsmRepository.transitionTo(sessionId, TaskStage.PLANNING, 1, "generate_plan")
             val planResult = callApiForStage(session, taskMemory, stageLabel = "📋 Planning")
                 ?: run { taskFsmRepository.setError(sessionId); return Result.failure(Exception("Planning stage failed")) }
+            // Post-check: verify planning response does not violate constraints
+            val planViolation = checkResponseViolation(session, planResult.text)
+            if (planViolation != null) {
+                saveAssistantMessage(session, planResult)
+                return handleConstraintViolation(session, planViolation, userText)
+            }
             saveAssistantMessage(session, planResult)
             if (sessionDao.countAssistantMessages(sessionId) == 1) updateSessionTitle(sessionId, planResult.text)
 
@@ -477,6 +601,12 @@ class LLMAgent(
                     taskFsmRepository.transitionTo(sessionId, TaskStage.EXECUTION, step, "execute_step", stepCount)
                     val stepResult = callApiForStage(session, taskMemory, stageLabel = "⚙️ Шаг $step/$stepCount")
                         ?: run { taskFsmRepository.setError(sessionId); return Result.failure(Exception("Execution step $step failed")) }
+                    // Post-check: verify step response does not violate constraints
+                    val stepViolation = checkResponseViolation(session, stepResult.text)
+                    if (stepViolation != null) {
+                        saveAssistantMessage(session, stepResult)
+                        return handleConstraintViolation(session, stepViolation, userText)
+                    }
                     saveAssistantMessage(session, stepResult)
                 }
             } else {
@@ -484,6 +614,12 @@ class LLMAgent(
                 taskFsmRepository.transitionTo(sessionId, TaskStage.EXECUTION, startStep, "execute_step", stepCount)
                 val stepResult = callApiForStage(session, taskMemory, stageLabel = "⚙️ Шаг $startStep/$stepCount")
                     ?: run { taskFsmRepository.setError(sessionId); return Result.failure(Exception("Execution step $startStep failed")) }
+                // Post-check: verify step response does not violate constraints
+                val singleStepViolation = checkResponseViolation(session, stepResult.text)
+                if (singleStepViolation != null) {
+                    saveAssistantMessage(session, stepResult)
+                    return handleConstraintViolation(session, singleStepViolation, userText)
+                }
                 saveAssistantMessage(session, stepResult)
 
                 if (startStep < stepCount) {
@@ -597,6 +733,46 @@ class LLMAgent(
         }
     }
 
+    /**
+     * Checks if a model response text violates any active constraints.
+     * Returns a non-null violation description if violated, null if OK.
+     */
+    private suspend fun checkResponseViolation(session: SessionEntity, responseText: String): String? {
+        val constraints = constraintsRepository.constraints
+        if (!constraints.enabled || constraints.rules.isBlank()) return null
+
+        val prompt = """You are a constraints checker. Given the list of agent constraints and an agent response, determine if the response violates any constraint.
+
+Agent constraints:
+${constraints.rules.trim()}
+
+Agent response:
+$responseText
+
+Reply with EXACTLY one of:
+- "OK" if the response does not violate any constraint.
+- "VIOLATION: <constraint description>" if it violates a constraint.
+
+Reply with nothing else."""
+
+        val request = ChatRequest(
+            model = session.model,
+            instructions = null,
+            input = listOf(InputMessage(role = "user", content = prompt)),
+            temperature = null
+        )
+        val response = runCatching { api.sendMessage(request) }.getOrNull() ?: return null
+        val raw = response.output
+            .firstOrNull { it.type == "message" }
+            ?.content
+            ?.firstOrNull { it.type == "output_text" }
+            ?.text?.trim() ?: return null
+
+        return if (raw.startsWith("VIOLATION:", ignoreCase = true)) {
+            raw.removePrefix("VIOLATION:").removePrefix("violation:").trim()
+        } else null
+    }
+
     private suspend fun savePromptMessage(session: SessionEntity, text: String): MessageEntity {
         val entity = MessageEntity(
             id = UUID.randomUUID().toString(),
@@ -682,7 +858,8 @@ class LLMAgent(
         if (session.systemPrompt.isNotBlank()) parts.add(session.systemPrompt)
         val memCtx = memory.toContextString()
         if (memCtx.isNotBlank()) parts.add(memCtx)
-        parts.add(taskFsmRepository.toInstructionsBlock(fsm, taskMemory.takeIf { it.enabled }))
+        val activeConstraints = constraintsRepository.constraints.takeIf { it.enabled }
+        parts.add(taskFsmRepository.toInstructionsBlock(fsm, taskMemory.takeIf { it.enabled }, activeConstraints))
         val userInfoCtx = userProfileRepository.userInformationContextString()
         if (userInfoCtx.isNotBlank()) parts.add(userInfoCtx)
         return parts.joinToString("\n\n")

@@ -38,7 +38,8 @@ presentation/  →  agent/  →  data/
 | `agent/` | `LLMAgent` (core request logic), `AgentMemory` (SharedPreferences KV store), `AgentRunner` (ReAct loop agent), `TaskFsmRepository` (FSM state machine) |
 | `data/api/` | `AnthropicApi` (Retrofit interface to OpenAI-compatible proxy) |
 | `data/db/` | Room database: DAOs + entities for sessions, messages, summaries, facts, branch nodes, task_fsm |
-| `data/repository/UserProfileRepository.kt` | SharedPreferences store for User Profile and Task Memory settings; `toContextString()` appends them to API instructions when enabled |
+| `data/repository/UserProfileRepository.kt` | SharedPreferences store for User Profile (name, occupation, language, response style, format, notes) and Task Memory; `toContextString()` appends them to API instructions when enabled |
+| `data/repository/ConstraintsRepository.kt` | SharedPreferences store for agent constraints (`rules: String`, `enabled: Boolean`); enforced on every FSM stage via pre- and post-checks |
 | `domain/` | `Message`, `Settings` models; `ChatRepository` interface; `SendMessageUseCase` |
 | `di/AppModule.kt` | Koin DI — all singletons and viewmodels wired here |
 
@@ -77,19 +78,30 @@ Multi-stage task execution engine. Stages: `PLANNING → EXECUTION (N steps) →
 
 **UI (FsmStatusBanner):** Shows current stage with color coding, step progress bar, АВТО badge when auto-running. Buttons: ▶ Run All / ⏸ Stop / ↺ Reset. Button "Запустить все этапы" appears above input field when task memory enabled and user has typed text.
 
+### Agent Constraints (`ConstraintsRepository`)
+
+Stored globally in SharedPreferences. When enabled, injected into FSM instructions and enforced on every stage:
+
+- **Pre-check** (`checkConstraintViolation`) — before planning, user request is sent to LLM for constraint verification.
+- **Post-check** (`checkResponseViolation`) — after each planning/execution response, the response text is verified.
+- If violated → FSM transitions to `ERROR`, `handleConstraintViolation` saves an error message and makes a second API call to generate a concrete alternative request.
+- Error message format (Russian): `❌ Ошибка: действие нарушает ограничение «...»` + suggested alternative.
+- Constraints are separate from `UserInformation` — the `constraints` field was removed from `UserInformation` data class.
+
 ## Key Constraints
 
 - **API key hardcoded** in `di/AppModule.kt`. Backend is an OpenAI-compatible proxy at `https://api.proxyapi.ru/openai/v1/`.
 - **Room uses destructive migration** — schema changes wipe existing data.
 - **`AgentMemory` (SharedPreferences) is global** — shared across all sessions.
-- **`UserProfileRepository`** stores User Profile and Task Memory globally (SharedPreferences). When enabled via toggles, their content is appended to every request's instructions by `LLMAgent.buildInstructions()`.
+- **`UserProfileRepository`** stores User Profile and Task Memory globally (SharedPreferences). When enabled via toggles, their content is appended to every request's instructions by `LLMAgent.buildInstructions()`. The `constraints` field was removed from `UserInformation` — use `ConstraintsRepository` instead.
+- **`ConstraintsRepository`** stores agent constraints globally (SharedPreferences). When enabled, constraints are injected into FSM instructions via `TaskFsmRepository.toInstructionsBlock()`, and each user request + each stage response is verified against them via two extra synchronous API calls (`checkConstraintViolation` + `checkResponseViolation`), adding latency.
 - `STICKY_FACTS` and `COMPRESSION` strategies make an extra API call synchronously within `sendMessage`, adding latency.
 - Session title is auto-set from the first sentence of the first assistant response.
 - **`jvmTarget = "11"`** — повышен с 1.8 для совместимости с mockito-kotlin тестами.
 
 ## Testing
 
-Baseline тесты (Фаза 0 KMP-миграции) — 86 unit тестов, 0 failures.
+Unit тесты — 157 тестов, 0 failures.
 
 ```
 app/src/test/java/com/example/myapplication/
@@ -99,7 +111,11 @@ app/src/test/java/com/example/myapplication/
 ├── SendMessageTest.kt           — sendMessage full flow (11 тестов)
 ├── BuildBranchHistoryTest.kt    — branching history (9 тестов)
 ├── AgentMemoryTest.kt           — KV store (10 тестов)
-├── UserProfileRepositoryTest.kt — profile/task context (11 тестов)
+├── UserProfileRepositoryTest.kt — profile/task context (10 тестов)
+├── TaskFsmRepositoryTest.kt     — FSM state transitions, pause/resume, autoRun, error (24 тестов)
+├── FsmLLMAgentTest.kt           — FSM интеграция в LLMAgent: ручной/авто режим, обработка ошибок (14 тестов)
+├── ConstraintsRepositoryTest.kt — ConstraintsRepository: toContextBlock, defaults, enabled/disabled (8 тестов)
+├── ConstraintsCheckTest.kt      — pre/post-check нарушений, альтернатива, toInstructionsBlock (13 тестов)
 └── LLMAgentTestBase.kt          — Fake DAO инфраструктура (без тестов)
 ```
 

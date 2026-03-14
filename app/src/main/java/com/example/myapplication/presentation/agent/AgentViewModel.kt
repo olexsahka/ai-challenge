@@ -4,6 +4,8 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.myapplication.agent.LLMAgent
 import com.example.myapplication.agent.MemoryEntry
+import com.example.myapplication.data.repository.Constraints
+import com.example.myapplication.data.repository.ConstraintsRepository
 import com.example.myapplication.data.repository.TaskMemory
 import com.example.myapplication.data.repository.UserInformation
 import com.example.myapplication.data.repository.UserProfileRepository
@@ -40,12 +42,14 @@ data class AgentUiState(
     val activeNodeId: String? = null,
     val userInformation: UserInformation = UserInformation(),
     val taskMemory: TaskMemory = TaskMemory(),
-    val taskFsmState: TaskFsmEntity? = null
+    val taskFsmState: TaskFsmEntity? = null,
+    val constraints: Constraints = Constraints()
 )
 
 class AgentViewModel(
     private val agent: LLMAgent,
-    private val userProfileRepository: UserProfileRepository
+    private val userProfileRepository: UserProfileRepository,
+    private val constraintsRepository: ConstraintsRepository
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(AgentUiState())
@@ -82,6 +86,7 @@ class AgentViewModel(
         }
         refreshMemories()
         refreshProfile()
+        refreshConstraints()
     }
 
     fun newSession() {
@@ -304,5 +309,14 @@ class AgentViewModel(
     fun saveTaskMemory(task: TaskMemory) {
         userProfileRepository.taskMemory = task
         refreshProfile()
+    }
+
+    fun saveConstraints(constraints: Constraints) {
+        constraintsRepository.constraints = constraints
+        refreshConstraints()
+    }
+
+    private fun refreshConstraints() {
+        _uiState.update { it.copy(constraints = constraintsRepository.constraints) }
     }
 }

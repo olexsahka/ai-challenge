@@ -87,7 +87,8 @@ class FsmLLMAgentTest {
             factDao = factDao,
             branchNodeDao = branchNodeDao,
             userProfileRepository = profile,
-            taskFsmRepository = fsmRepo
+            taskFsmRepository = fsmRepo,
+            constraintsRepository = makeMockConstraintsRepository()
         )
     }
 

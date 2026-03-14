@@ -76,6 +76,7 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.example.myapplication.agent.MemoryEntry
+import com.example.myapplication.data.repository.Constraints
 import com.example.myapplication.data.repository.TaskMemory
 import com.example.myapplication.data.repository.UserInformation
 import com.example.myapplication.data.db.entity.BranchNodeEntity
@@ -123,11 +124,13 @@ fun AgentScreen(modifier: Modifier = Modifier, viewModel: AgentViewModel = koinV
                 memories = uiState.memories,
                 userInformation = uiState.userInformation,
                 taskMemory = uiState.taskMemory,
+                constraints = uiState.constraints,
                 onSave = { prompt, model, temp, compressionEnabled, compressionN, compressionM, memoryStrategy, slidingWindowN, stickyFactsN ->
                     viewModel.saveSessionContext(prompt, model, temp, compressionEnabled, compressionN, compressionM, memoryStrategy, slidingWindowN, stickyFactsN)
                 },
                 onSaveUserInformation = { viewModel.saveUserInformation(it) },
                 onSaveTaskMemory = { viewModel.saveTaskMemory(it) },
+                onSaveConstraints = { viewModel.saveConstraints(it) },
                 onForgetMemory = { viewModel.forgetMemory(it) },
                 onForgetAll = { viewModel.forgetAllMemory() },
                 onDismiss = { viewModel.hideSettings() }
@@ -317,9 +320,11 @@ private fun ContextSettingsSheet(
     memories: List<MemoryEntry>,
     userInformation: UserInformation,
     taskMemory: TaskMemory,
+    constraints: Constraints,
     onSave: (systemPrompt: String, model: String, temperature: Float, compressionEnabled: Boolean, compressionN: Int, compressionM: Int, memoryStrategy: String, slidingWindowN: Int, stickyFactsN: Int) -> Unit,
     onSaveUserInformation: (UserInformation) -> Unit,
     onSaveTaskMemory: (TaskMemory) -> Unit,
+    onSaveConstraints: (Constraints) -> Unit,
     onForgetMemory: (String) -> Unit,
     onForgetAll: () -> Unit,
     onDismiss: () -> Unit
@@ -340,11 +345,12 @@ private fun ContextSettingsSheet(
     var userLanguageText by rememberSaveable { mutableStateOf(userInformation.language) }
     var responseStyleText by rememberSaveable { mutableStateOf(userInformation.responseStyle) }
     var responseFormatText by rememberSaveable { mutableStateOf(userInformation.responseFormat) }
-    var constraintsText by rememberSaveable { mutableStateOf(userInformation.constraints) }
     var additionalNotesText by rememberSaveable { mutableStateOf(userInformation.additionalNotes) }
     var taskNameText by rememberSaveable { mutableStateOf(taskMemory.name) }
     var taskDescriptionText by rememberSaveable { mutableStateOf(taskMemory.description) }
     var taskEnabledState by rememberSaveable { mutableStateOf(taskMemory.enabled) }
+    var constraintsRulesText by rememberSaveable { mutableStateOf(constraints.rules) }
+    var constraintsEnabledState by rememberSaveable { mutableStateOf(constraints.enabled) }
 
     val sheetState = rememberModalBottomSheetState()
 
@@ -541,15 +547,6 @@ private fun ContextSettingsSheet(
                 )
                 Spacer(Modifier.height(8.dp))
                 OutlinedTextField(
-                    value = constraintsText,
-                    onValueChange = { constraintsText = it },
-                    label = { Text("Constraints (e.g. no code, no jargon)") },
-                    modifier = Modifier.fillMaxWidth(),
-                    minLines = 2,
-                    maxLines = 4
-                )
-                Spacer(Modifier.height(8.dp))
-                OutlinedTextField(
                     value = additionalNotesText,
                     onValueChange = { additionalNotesText = it },
                     label = { Text("Additional notes") },
@@ -593,6 +590,33 @@ private fun ContextSettingsSheet(
                 )
             }
             item {
+                HorizontalDivider()
+                Spacer(Modifier.height(4.dp))
+                Text("Agent Constraints", style = MaterialTheme.typography.titleSmall)
+                Spacer(Modifier.height(4.dp))
+                Row(
+                    Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Text("Enable constraints", style = MaterialTheme.typography.bodyMedium)
+                    Switch(
+                        checked = constraintsEnabledState,
+                        onCheckedChange = { constraintsEnabledState = it }
+                    )
+                }
+                Spacer(Modifier.height(4.dp))
+                OutlinedTextField(
+                    value = constraintsRulesText,
+                    onValueChange = { constraintsRulesText = it },
+                    label = { Text("Rules (one per line)") },
+                    modifier = Modifier.fillMaxWidth(),
+                    minLines = 3,
+                    maxLines = 8,
+                    placeholder = { Text("e.g.:\n- no code generation\n- reply in English only") }
+                )
+            }
+            item {
                 Button(
                     onClick = {
                         val n = compressionNText.toIntOrNull()?.coerceAtLeast(1) ?: 5
@@ -601,8 +625,9 @@ private fun ContextSettingsSheet(
                         val compressionActive = selectedStrategy == MemoryStrategy.COMPRESSION.name
                         val sfN = stickyFactsNText.toIntOrNull()?.coerceAtLeast(1) ?: 5
                         onSave(systemPrompt, model, temperature, compressionActive, n, m, selectedStrategy, swN, sfN)
-                        onSaveUserInformation(UserInformation(userNameText, userOccupationText, userLanguageText, responseStyleText, responseFormatText, constraintsText, additionalNotesText))
+                        onSaveUserInformation(UserInformation(userNameText, userOccupationText, userLanguageText, responseStyleText, responseFormatText, additionalNotesText))
                         onSaveTaskMemory(TaskMemory(taskNameText, taskDescriptionText, taskEnabledState))
+                        onSaveConstraints(Constraints(constraintsRulesText, constraintsEnabledState))
                     },
                     modifier = Modifier.fillMaxWidth()
                 ) { Text("Save") }

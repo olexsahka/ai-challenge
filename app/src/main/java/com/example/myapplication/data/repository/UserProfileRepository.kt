@@ -9,7 +9,6 @@ data class UserInformation(
     val language: String = "",
     val responseStyle: String = "",
     val responseFormat: String = "",
-    val constraints: String = "",
     val additionalNotes: String = ""
 )
 
@@ -29,7 +28,6 @@ class UserProfileRepository(context: Context) {
             language = prefs.getString(KEY_USER_LANGUAGE, "") ?: "",
             responseStyle = prefs.getString(KEY_RESPONSE_STYLE, "") ?: "",
             responseFormat = prefs.getString(KEY_RESPONSE_FORMAT, "") ?: "",
-            constraints = prefs.getString(KEY_CONSTRAINTS, "") ?: "",
             additionalNotes = prefs.getString(KEY_ADDITIONAL_NOTES, "") ?: ""
         )
         set(value) = prefs.edit {
@@ -38,7 +36,6 @@ class UserProfileRepository(context: Context) {
             putString(KEY_USER_LANGUAGE, value.language)
             putString(KEY_RESPONSE_STYLE, value.responseStyle)
             putString(KEY_RESPONSE_FORMAT, value.responseFormat)
-            putString(KEY_CONSTRAINTS, value.constraints)
             putString(KEY_ADDITIONAL_NOTES, value.additionalNotes)
         }
 
@@ -62,7 +59,6 @@ class UserProfileRepository(context: Context) {
         if (info.language.isNotBlank()) infoLines.add("Language: ${info.language.trim()}")
         if (info.responseStyle.isNotBlank()) infoLines.add("Response style: ${info.responseStyle.trim()}")
         if (info.responseFormat.isNotBlank()) infoLines.add("Response format: ${info.responseFormat.trim()}")
-        if (info.constraints.isNotBlank()) infoLines.add("Constraints: ${info.constraints.trim()}")
         if (info.additionalNotes.isNotBlank()) infoLines.add("Notes: ${info.additionalNotes.trim()}")
         return if (infoLines.isNotEmpty()) "User information:\n${infoLines.joinToString("\n")}" else ""
     }
@@ -77,7 +73,6 @@ class UserProfileRepository(context: Context) {
         if (info.language.isNotBlank()) infoLines.add("Language: ${info.language.trim()}")
         if (info.responseStyle.isNotBlank()) infoLines.add("Response style: ${info.responseStyle.trim()}")
         if (info.responseFormat.isNotBlank()) infoLines.add("Response format: ${info.responseFormat.trim()}")
-        if (info.constraints.isNotBlank()) infoLines.add("Constraints: ${info.constraints.trim()}")
         if (info.additionalNotes.isNotBlank()) infoLines.add("Notes: ${info.additionalNotes.trim()}")
         if (infoLines.isNotEmpty()) {
             parts.add("User information:\n${infoLines.joinToString("\n")}")
@@ -100,7 +95,6 @@ class UserProfileRepository(context: Context) {
         private const val KEY_USER_LANGUAGE = "user_language"
         private const val KEY_RESPONSE_STYLE = "response_style"
         private const val KEY_RESPONSE_FORMAT = "response_format"
-        private const val KEY_CONSTRAINTS = "constraints"
         private const val KEY_ADDITIONAL_NOTES = "additional_notes"
         private const val KEY_TASK_NAME = "task_name"
         private const val KEY_TASK_DESCRIPTION = "task_description"

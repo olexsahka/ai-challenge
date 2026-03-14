@@ -31,7 +31,8 @@ AgentViewModel           LLMAgent
 | `AgentViewModel` | Owns `AgentUiState`; bridges UI to `LLMAgent`; exposes session list, active messages, active summary, and memory entries as `StateFlow` |
 | `LLMAgent` | Encapsulates all request logic: builds history from DB, assembles instructions (system prompt + memory), applies compression if enabled, calls API, persists both user and assistant messages and summaries |
 | `AgentMemory` | Key-value memory store backed by `SharedPreferences`; injected into every request as additional instructions |
-| `UserProfileRepository` | Stores User Profile description + toggle and Task Memory (name, description) + toggle in `SharedPreferences`; appended to every request's instructions when the respective toggle is enabled |
+| `UserProfileRepository` | Stores User Profile (name, occupation, language, response style, format, notes) + toggle and Task Memory (name, description) + toggle in `SharedPreferences`; appended to every request's instructions when the respective toggle is enabled |
+| `ConstraintsRepository` | Stores agent constraints (rules text + enabled toggle) in `SharedPreferences`; enforced on every FSM stage via pre- and post-checks against the LLM |
 | `AppDatabase` | Room database with `sessions`, `messages`, and `summaries` tables |
 | `SessionDao` | CRUD for sessions; `observeAll()`, `getLatest()`, `getById()`, `updateContext()` |
 | `MessageDao` | Insert and observe messages by session |
@@ -137,9 +138,8 @@ When compression is enabled and a summary exists for the active session, a pinne
 
 ### User Profile
 
-Stored globally in `UserProfileRepository` (SharedPreferences). The context settings bottom sheet exposes a "User Profile" section with:
-- **Profile description** — free-form text describing the user.
-- **User Data Usage** toggle — when enabled, the profile description is appended to every request's instructions under "User profile:".
+Stored globally in `UserProfileRepository` (SharedPreferences). The context settings bottom sheet exposes a "User Profile" section with fields: name, occupation, language, response style, response format, additional notes.
+- **User Data Usage** toggle — when enabled, the profile fields are appended to every request's instructions under "User information:".
 
 ### Task Memory
 
@@ -147,6 +147,24 @@ Also stored globally in `UserProfileRepository`. The context settings bottom she
 - **Task name** — short label for the current task.
 - **Task description** — detailed description of the task.
 - **Task Memory Usage** toggle — when enabled, task name and description are appended to every request's instructions under "Current task:".
+
+### Agent Constraints
+
+Stored globally in `ConstraintsRepository` (SharedPreferences), separate from the conversation and user profile. The context settings bottom sheet exposes an "Agent Constraints" section with:
+- **Rules** — free-form text, one rule per line (e.g. "no code generation", "reply in English only").
+- **Enable constraints** toggle — when enabled, constraints are enforced on every FSM stage.
+
+**How enforcement works:**
+1. **Pre-check** — before planning begins, `LLMAgent` sends the user's request to the LLM asking whether it violates any rule.
+2. **Post-check** — after each FSM stage response (planning, each execution step), the response text is checked the same way.
+3. If a violation is detected at any point:
+   - The FSM transitions to `ERROR`.
+   - The agent saves an error message with the violated constraint name.
+   - A second API call generates a concrete alternative request that achieves a similar goal without violating the rules.
+   - The user sees the violation description, two options (update constraints or use the alternative), and the suggested alternative text.
+4. After the user updates constraints or rephrases their request, the next `sendMessage` resets the FSM and starts fresh planning.
+
+**Key class:** `ConstraintsRepository` — stores `rules: String` and `enabled: Boolean` in SharedPreferences; `toContextBlock()` generates the constraints section injected into FSM instructions via `TaskFsmRepository.toInstructionsBlock()`.
 
 ### Task FSM (Finite State Machine)
 
@@ -196,6 +214,7 @@ Accessible via the gear icon in the top bar. Stored in the `sessions` table:
 | Memory Compression | Toggle (enabled / disabled) |
 | Send last n messages | Integer, default 5 (visible when compression enabled) |
 | Update summary every m messages | Integer, default 6 (visible when compression enabled) |
+| Agent Constraints | Toggle + free-form rules text (one per line); enforced on every FSM stage |
 
 ---
 
@@ -205,7 +224,7 @@ Accessible via the gear icon in the top bar. Stored in the `sessions` table:
 
 | Фаза | Статус |
 |---|---|
-| Фаза 0 — Baseline тесты | ✅ Завершена (127 тестов) |
+| Фаза 0 — Baseline тесты | ✅ Завершена (157 тестов) |
 | Фаза 1 — Domain слой | 🔲 Не начата |
 | Фаза 2 — Platform абстракции | 🔲 Не начата |
 | Фаза 3 — Shared KMP модуль | 🔲 Не начата |
@@ -225,6 +244,8 @@ app/src/test/
 ├── UserProfileRepositoryTest.kt — profile/task context строки (11 тестов)
 ├── TaskFsmRepositoryTest.kt     — FSM state transitions, pause/resume, autoRun, error (24 тестов)
 ├── FsmLLMAgentTest.kt           — FSM интеграция в LLMAgent: ручной/авто режим, обработка ошибок (14 тестов)
+├── ConstraintsRepositoryTest.kt — ConstraintsRepository: toContextBlock, defaults, enabled/disabled (8 тестов)
+├── ConstraintsCheckTest.kt      — pre/post-check нарушений, альтернатива, toInstructionsBlock (13 тестов)
 └── LLMAgentTestBase.kt          — Fake DAO инфраструктура (без тестов)
 ```
 
