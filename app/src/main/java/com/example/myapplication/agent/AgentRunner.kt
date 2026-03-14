@@ -4,17 +4,21 @@ import com.example.myapplication.data.api.AnthropicApi
 import com.example.myapplication.data.api.model.ChatRequest
 import com.example.myapplication.data.api.model.InputMessage
 import com.example.myapplication.data.api.model.extractText
+import com.example.myapplication.data.mcp.McpConnectionStatus
+import com.example.myapplication.data.mcp.McpRepository
+import com.example.myapplication.data.mcp.McpTool
+import org.json.JSONObject
 
 private const val MAX_ITERATIONS = 6
 private const val MODEL = "gpt-4o-mini"
 
-private val SYSTEM_PROMPT = """
+private val BASE_SYSTEM_PROMPT = """
 You are an autonomous AI agent with memory and planning capabilities.
 You operate in a loop: Think → Act → Observe → Remember → Repeat until done.
 
 You have access to these tools (respond with EXACTLY this format):
 THOUGHT: <your internal reasoning>
-ACTION: <one of: SEARCH_MEMORY, STORE_MEMORY, CALCULATE, FINAL_ANSWER>
+ACTION: <one of: SEARCH_MEMORY, STORE_MEMORY, CALCULATE, FINAL_ANSWER{MCP_ACTIONS}>
 INPUT: <input for the action>
 
 Tool descriptions:
@@ -22,24 +26,61 @@ Tool descriptions:
 - STORE_MEMORY: Save a fact. INPUT = key=value
 - CALCULATE: Evaluate a math expression. INPUT = expression
 - FINAL_ANSWER: Provide the final answer to the user. INPUT = your answer
-
+{MCP_TOOL_DESCRIPTIONS}
 After each action you will receive an OBSERVATION. Continue until you use FINAL_ANSWER.
 Only output one step at a time.
+When the user asks what you can do, list all available tools with their purpose in the user's language.
 """.trimIndent()
+
+private fun buildToolDescription(tool: McpTool): String {
+    val props = tool.inputSchema.optJSONObject("properties") ?: return "- ${tool.name}: ${tool.description}. INPUT = {}"
+    val fields = mutableListOf<String>()
+    val keys = props.keys()
+    while (keys.hasNext()) {
+        val key = keys.next()
+        val prop = props.optJSONObject(key)
+        val type = prop?.optString("type", "string") ?: "string"
+        fields.add("\"$key\": <$type>")
+    }
+    val example = fields.joinToString(", ")
+    return "- ${tool.name}: ${tool.description}. INPUT = {$example}"
+}
+
+private fun buildSystemPrompt(mcpTools: List<McpTool>): String {
+    if (mcpTools.isEmpty()) {
+        return BASE_SYSTEM_PROMPT
+            .replace("{MCP_ACTIONS}", "")
+            .replace("{MCP_TOOL_DESCRIPTIONS}", "")
+    }
+    val actionNames = mcpTools.joinToString(", ") { it.name }
+    val descriptions = mcpTools.joinToString("\n") { buildToolDescription(it) }
+    return BASE_SYSTEM_PROMPT
+        .replace("{MCP_ACTIONS}", ", $actionNames")
+        .replace("{MCP_TOOL_DESCRIPTIONS}", "$descriptions\n")
+}
 
 class AgentRunner(
     private val api: AnthropicApi,
-    private val memory: AgentMemory
+    private val memory: AgentMemory,
+    private val mcpRepository: McpRepository? = null
 ) {
     suspend fun run(
         userTask: String,
         onStep: suspend (AgentStep) -> Unit
     ) {
+        val mcpTools: List<McpTool> = if (mcpRepository != null && mcpRepository.vkusVillEnabled) {
+            val status = mcpRepository.connect()
+            if (status is McpConnectionStatus.Connected) status.tools else emptyList()
+        } else {
+            emptyList()
+        }
+
+        val systemPrompt = buildSystemPrompt(mcpTools)
         val memoryContext = memory.toContextString()
         val systemWithMemory = if (memoryContext.isNotEmpty()) {
-            "$SYSTEM_PROMPT\n\n$memoryContext"
+            "$systemPrompt\n\n$memoryContext"
         } else {
-            SYSTEM_PROMPT
+            systemPrompt
         }
 
         val conversationHistory = mutableListOf<InputMessage>()
@@ -49,8 +90,7 @@ class AgentRunner(
             val request = ChatRequest(
                 model = MODEL,
                 instructions = systemWithMemory,
-                input = conversationHistory.toList(),
-                maxOutputTokens = 512
+                input = conversationHistory.toList()
             )
 
             val response = try {
@@ -70,7 +110,12 @@ class AgentRunner(
                 onStep(AgentStep(AgentStepType.THOUGHT, parsed.thought))
             }
 
-            val action = parsed.action ?: break
+            if (parsed.action == null) {
+                // Model responded without ReAct format — treat the whole response as final answer
+                onStep(AgentStep(AgentStepType.FINAL_ANSWER, rawText))
+                break
+            }
+            val action = parsed.action
             val input = parsed.input ?: ""
 
             if (action == "FINAL_ANSWER") {
@@ -87,7 +132,7 @@ class AgentRunner(
         }
     }
 
-    private fun executeAction(action: String, input: String): String {
+    private suspend fun executeAction(action: String, input: String): String {
         return when (action.trim().uppercase()) {
             "SEARCH_MEMORY" -> {
                 val key = input.trim()
@@ -112,7 +157,18 @@ class AgentRunner(
                     "Calculation error: ${e.message}"
                 }
             }
-            else -> "Unknown action: $action"
+            else -> {
+                if (mcpRepository != null && mcpRepository.vkusVillEnabled && mcpRepository.isConnected) {
+                    try {
+                        val args = JSONObject(input.trim())
+                        mcpRepository.callTool(action.trim(), args)
+                    } catch (e: Exception) {
+                        "Error calling MCP tool $action: ${e.message}"
+                    }
+                } else {
+                    "Unknown action: $action"
+                }
+            }
         }
     }
 

@@ -2,8 +2,12 @@ package com.example.myapplication.presentation.agent
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.example.myapplication.agent.AgentRunner
+import com.example.myapplication.agent.AgentStepType
 import com.example.myapplication.agent.LLMAgent
 import com.example.myapplication.agent.MemoryEntry
+import com.example.myapplication.data.mcp.McpConnectionStatus
+import com.example.myapplication.data.mcp.McpRepository
 import com.example.myapplication.data.repository.Constraints
 import com.example.myapplication.data.repository.ConstraintsRepository
 import com.example.myapplication.data.repository.TaskMemory
@@ -44,13 +48,17 @@ data class AgentUiState(
     val userInformation: UserInformation = UserInformation(),
     val taskMemory: TaskMemory = TaskMemory(),
     val taskFsmState: TaskFsmEntity? = null,
-    val constraints: Constraints = Constraints()
+    val constraints: Constraints = Constraints(),
+    val vkusVillEnabled: Boolean = false,
+    val mcpStatus: McpConnectionStatus = McpConnectionStatus.Disconnected
 )
 
 class AgentViewModel(
     private val agent: LLMAgent,
     private val userProfileRepository: UserProfileRepository,
-    private val constraintsRepository: ConstraintsRepository
+    private val constraintsRepository: ConstraintsRepository,
+    private val mcpRepository: McpRepository,
+    private val agentRunner: AgentRunner
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(AgentUiState())
@@ -85,6 +93,7 @@ class AgentViewModel(
         refreshMemories()
         refreshProfile()
         refreshConstraints()
+        refreshMcpState()
     }
 
     fun newSession() {
@@ -103,19 +112,33 @@ class AgentViewModel(
         if (text.isBlank() || _uiState.value.isLoading) return
         _uiState.update { it.copy(isLoading = true, error = null) }
         viewModelScope.launch {
-            val strategy = _uiState.value.activeSession?.memoryStrategy
-            val nodeId = _uiState.value.activeNodeId
-            if (strategy == MemoryStrategy.BRANCHING.name && nodeId != null) {
-                agent.sendMessageToNode(sessionId, nodeId, text).onFailure { e ->
-                    _uiState.update { it.copy(error = e.message ?: "Error") }
-                }
+            if (_uiState.value.vkusVillEnabled) {
+                val nodeId = _uiState.value.activeNodeId
+                runAgentWithMcp(sessionId, text, nodeId)
             } else {
-                agent.sendMessage(sessionId, text).onFailure { e ->
-                    _uiState.update { it.copy(error = e.message ?: "Error") }
+                val strategy = _uiState.value.activeSession?.memoryStrategy
+                val nodeId = _uiState.value.activeNodeId
+                if (strategy == MemoryStrategy.BRANCHING.name && nodeId != null) {
+                    agent.sendMessageToNode(sessionId, nodeId, text).onFailure { e ->
+                        _uiState.update { it.copy(error = e.message ?: "Error") }
+                    }
+                } else {
+                    agent.sendMessage(sessionId, text).onFailure { e ->
+                        _uiState.update { it.copy(error = e.message ?: "Error") }
+                    }
                 }
             }
             _uiState.update { it.copy(isLoading = false) }
             refreshMemories()
+        }
+    }
+
+    private suspend fun runAgentWithMcp(sessionId: String, userTask: String, nodeId: String?) {
+        agent.saveUserMessage(sessionId, userTask, nodeId)
+        agentRunner.run(userTask) { step ->
+            if (step.type == AgentStepType.FINAL_ANSWER) {
+                agent.saveAssistantMessage(sessionId, step.content, nodeId)
+            }
         }
     }
 
@@ -306,5 +329,31 @@ class AgentViewModel(
 
     private fun refreshConstraints() {
         _uiState.update { it.copy(constraints = constraintsRepository.constraints) }
+    }
+
+    private fun refreshMcpState() {
+        val enabled = mcpRepository.vkusVillEnabled
+        _uiState.update { it.copy(vkusVillEnabled = enabled) }
+        if (enabled) {
+            _uiState.update { it.copy(mcpStatus = McpConnectionStatus.Connecting) }
+            viewModelScope.launch {
+                val status = mcpRepository.connect()
+                _uiState.update { it.copy(mcpStatus = status) }
+            }
+        }
+    }
+
+    fun toggleVkusVill(enabled: Boolean) {
+        mcpRepository.vkusVillEnabled = enabled
+        if (enabled) {
+            _uiState.update { it.copy(vkusVillEnabled = true, mcpStatus = McpConnectionStatus.Connecting) }
+            viewModelScope.launch {
+                val status = mcpRepository.connect()
+                _uiState.update { it.copy(mcpStatus = status) }
+            }
+        } else {
+            mcpRepository.disconnect()
+            _uiState.update { it.copy(vkusVillEnabled = false, mcpStatus = McpConnectionStatus.Disconnected) }
+        }
     }
 }

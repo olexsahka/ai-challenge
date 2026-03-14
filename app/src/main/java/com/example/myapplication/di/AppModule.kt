@@ -1,9 +1,12 @@
 package com.example.myapplication.di
 
 import com.example.myapplication.agent.AgentMemory
+import com.example.myapplication.agent.AgentRunner
 import com.example.myapplication.agent.LLMAgent
 import com.example.myapplication.agent.TaskFsmRepository
 import com.example.myapplication.data.api.AnthropicApi
+import com.example.myapplication.data.mcp.McpClient
+import com.example.myapplication.data.mcp.McpRepository
 import com.example.myapplication.data.db.AppDatabase
 import com.example.myapplication.data.repository.ChatRepositoryImpl
 import com.example.myapplication.data.repository.SettingsRepository
@@ -75,7 +78,10 @@ val appModule = module {
     single { ConstraintsRepository(androidContext()) }
     single { TaskFsmRepository(get()) }
     single { LLMAgent(get(), get(), get(), get(), get(), get(), get(), get(), get(), get()) }
+    single { McpClient(get()) }
+    single { McpRepository(androidContext(), get()) }
+    single { AgentRunner(get(), get(), get()) }
 
     viewModel { ChatViewModel(get(), get(), get(), get()) }
-    viewModel { AgentViewModel(get(), get(), get()) }
+    viewModel { AgentViewModel(get(), get(), get(), get(), get()) }
 }

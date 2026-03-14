@@ -11,7 +11,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 # Build and install on connected device
 ./gradlew installDebug
 
-# Run all unit tests (145 тестов, 0 failures)
+# Run all unit tests (160 тестов, 0 failures)
 ./gradlew :app:testDebugUnitTest
 
 # Run instrumented tests (requires connected device/emulator)
@@ -37,6 +37,7 @@ presentation/  →  agent/  →  data/
 | `presentation/chat/` | `ChatScreen`, `ChatViewModel` — legacy/alternative chat UI |
 | `agent/` | `LLMAgent` (core request logic), `AgentMemory` (SharedPreferences KV store), `AgentRunner` (ReAct loop agent), `TaskFsmRepository` (FSM state machine) |
 | `data/api/` | `AnthropicApi` (Retrofit interface to OpenAI-compatible proxy) |
+| `data/mcp/` | `McpClient` (OkHttp JSON-RPC client for MCP protocol), `McpRepository` (SharedPreferences toggle + proxy to McpClient) |
 | `data/db/` | Room database: DAOs + entities for sessions, messages, summaries, facts, branch nodes, task_fsm |
 | `data/repository/UserProfileRepository.kt` | SharedPreferences store for User Profile (name, occupation, language, response style, format, notes) and Task Memory; `toContextString()` appends them to API instructions when enabled |
 | `data/repository/ConstraintsRepository.kt` | SharedPreferences store for agent constraints (`rules: String`, `enabled: Boolean`); enforced on every FSM stage via pre- and post-checks |
@@ -59,7 +60,23 @@ Each session uses one of five strategies, selected per-session in context settin
 
 ### `AgentRunner` (ReAct loop)
 
-Standalone ReAct-style agent (max 6 iterations) used independently from `LLMAgent`. Tools: `SEARCH_MEMORY`, `STORE_MEMORY`, `CALCULATE`, `FINAL_ANSWER`. Parses `THOUGHT/ACTION/INPUT` lines from model output.
+Standalone ReAct-style agent (max 6 iterations) used independently from `LLMAgent`. Tools: `SEARCH_MEMORY`, `STORE_MEMORY`, `CALCULATE`, `FINAL_ANSWER`, + dynamic MCP tools when ВкусВилл enabled. Parses `THOUGHT/ACTION/INPUT` lines from model output.
+
+**Key behaviours:**
+- If model responds without ReAct format (plain text) → entire response treated as `FINAL_ANSWER`
+- MCP tools added to system prompt dynamically at start of each `run()` call via `connect()`
+- MCP action input must be valid JSON; invalid JSON returns error OBSERVATION without calling `callTool`
+- Messages saved via `agent.saveUserMessage(sessionId, text, nodeId)` and `saveAssistantMessage(...)` with `branchNodeId` to support all memory strategies
+
+### MCP (`McpClient` + `McpRepository`)
+
+MCP protocol over HTTP (JSON-RPC). Server: `https://mcp001.vkusvill.ru/mcp`.
+
+**Handshake:** `initialize` → `notifications/initialized` → `tools/list`. Session ID returned in `Mcp-Session-Id` header, sent on all subsequent requests.
+
+**`McpRepository` is `open`** — subclassable for testing (no mocking of suspend functions needed; use `FakeMcpRepository` pattern).
+
+**Test dependency:** `org.json:json:20240303` added to `testImplementation` so unit tests can construct real `JSONObject` instances without Android runtime.
 
 ### Task FSM (`TaskFsmRepository` + `TaskFsmEntity`)
 
@@ -91,6 +108,8 @@ Stored globally in SharedPreferences. When enabled, injected into FSM instructio
 ## Key Constraints
 
 - **API key hardcoded** in `di/AppModule.kt`. Backend is an OpenAI-compatible proxy at `https://api.proxyapi.ru/openai/v1/`.
+- **MCP server:** `https://mcp001.vkusvill.ru/mcp` — ВкусВилл product search. `vkusVillEnabled` persisted in SharedPreferences (`mcp_prefs`). `AgentRunner` calls `connect()` on every `run()` to refresh tools; existing session reused if server returns same session id.
+- **`McpRepository` is `open`** — allows `FakeMcpRepository` subclass in tests without Mockito suspend-function issues.
 - **Room uses destructive migration** — schema changes wipe existing data.
 - **`AgentMemory` (SharedPreferences) is global** — shared across all sessions.
 - **`UserProfileRepository`** stores User Profile and Task Memory globally (SharedPreferences). When enabled via toggles, their content is appended to every request's instructions by `LLMAgent.buildInstructions()`. The `constraints` field was removed from `UserInformation` — use `ConstraintsRepository` instead.
@@ -101,11 +120,12 @@ Stored globally in SharedPreferences. When enabled, injected into FSM instructio
 
 ## Testing
 
-Unit тесты — 145 тестов, 0 failures.
+Unit тесты — 160 тестов, 0 failures.
 
 ```
 app/src/test/java/com/example/myapplication/
 ├── AgentRunnerTest.kt           — ReAct loop (16 тестов)
+├── AgentRunnerMcpTest.kt        — MCP интеграция AgentRunner (15 тестов)
 ├── BuildHistoryTest.kt          — 5 стратегий памяти (12 тестов)
 ├── BuildInstructionsTest.kt     — buildInstructions логика (11 тестов)
 ├── SendMessageTest.kt           — sendMessage full flow (11 тестов)
@@ -120,6 +140,8 @@ app/src/test/java/com/example/myapplication/
 ```
 
 **Тестовая инфраструктура:** вместо реальных DAO используются `FakeSessionDao`, `FakeMessageDao`, `FakeSummaryDao`, `FakeFactDao`, `FakeBranchNodeDao` (in-memory, без Room/Android). `AgentMemory` и `UserProfileRepository` мокируются через Mockito (изолируют `Context`/`SharedPreferences`).
+
+**Для тестов MCP:** `McpRepository` объявлен `open` — создавай `FakeMcpRepository : McpRepository(null, null)` и переопределяй `connect()`, `callTool()`, `isConnected`, `vkusVillEnabled`. Не используй Mockito для suspend-функций `McpRepository` — это ненадёжно без `coWhenever` (недоступен в mockito-kotlin 5.2.1).
 
 **Важно для будущих тестов:** `CapturingAnthropicApi.lastRequest` перезаписывается на каждый API вызов. Для стратегий с двумя вызовами (STICKY_FACTS, COMPRESSION) использовать `SequentialAnthropicApi.requests.first()` чтобы получить именно главный запрос.
 

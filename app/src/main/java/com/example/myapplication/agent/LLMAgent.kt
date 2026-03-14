@@ -970,4 +970,37 @@ Extract facts about: goals, constraints, preferences, decisions, agreements, nam
         )
         return summary
     }
+
+    suspend fun saveUserMessage(sessionId: String, text: String, branchNodeId: String? = null) {
+        messageDao.insert(
+            MessageEntity(
+                id = java.util.UUID.randomUUID().toString(),
+                sessionId = sessionId,
+                content = text,
+                isFromUser = true,
+                branchNodeId = branchNodeId,
+                createdAt = System.currentTimeMillis()
+            )
+        )
+    }
+
+    suspend fun saveAssistantMessage(sessionId: String, text: String, branchNodeId: String? = null) {
+        messageDao.insert(
+            MessageEntity(
+                id = java.util.UUID.randomUUID().toString(),
+                sessionId = sessionId,
+                content = text,
+                isFromUser = false,
+                branchNodeId = branchNodeId,
+                createdAt = System.currentTimeMillis()
+            )
+        )
+        val session = sessionDao.getById(sessionId) ?: return
+        if (session.title == "New Chat") {
+            val firstSentence = text.split(Regex("[.!?\\n]")).firstOrNull { it.isNotBlank() }?.trim()
+            if (!firstSentence.isNullOrBlank()) {
+                sessionDao.updateTitle(sessionId, firstSentence.take(60))
+            }
+        }
+    }
 }

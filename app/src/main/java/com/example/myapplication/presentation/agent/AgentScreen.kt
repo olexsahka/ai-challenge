@@ -22,6 +22,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.ClickableText
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
@@ -70,6 +71,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalUriHandler
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
@@ -91,6 +95,7 @@ import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material3.RadioButton
 import com.example.myapplication.domain.model.Message
 import com.example.myapplication.domain.model.MessageMeta
+import com.example.myapplication.data.mcp.McpConnectionStatus
 import org.koin.androidx.compose.koinViewModel
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -126,10 +131,13 @@ fun AgentScreen(modifier: Modifier = Modifier, viewModel: AgentViewModel = koinV
                 userInformation = uiState.userInformation,
                 taskMemory = uiState.taskMemory,
                 constraints = uiState.constraints,
+                vkusVillEnabled = uiState.vkusVillEnabled,
+                mcpStatus = uiState.mcpStatus,
                 onSave = { config -> viewModel.saveSessionContext(config) },
                 onSaveUserInformation = { viewModel.saveUserInformation(it) },
                 onSaveTaskMemory = { viewModel.saveTaskMemory(it) },
                 onSaveConstraints = { viewModel.saveConstraints(it) },
+                onToggleVkusVill = { viewModel.toggleVkusVill(it) },
                 onForgetMemory = { viewModel.forgetMemory(it) },
                 onForgetAll = { viewModel.forgetAllMemory() },
                 onDismiss = { viewModel.hideSettings() }
@@ -320,10 +328,13 @@ private fun ContextSettingsSheet(
     userInformation: UserInformation,
     taskMemory: TaskMemory,
     constraints: Constraints,
+    vkusVillEnabled: Boolean,
+    mcpStatus: McpConnectionStatus,
     onSave: (SessionContextConfig) -> Unit,
     onSaveUserInformation: (UserInformation) -> Unit,
     onSaveTaskMemory: (TaskMemory) -> Unit,
     onSaveConstraints: (Constraints) -> Unit,
+    onToggleVkusVill: (Boolean) -> Unit,
     onForgetMemory: (String) -> Unit,
     onForgetAll: () -> Unit,
     onDismiss: () -> Unit
@@ -614,6 +625,67 @@ private fun ContextSettingsSheet(
                     maxLines = 8,
                     placeholder = { Text("e.g.:\n- no code generation\n- reply in English only") }
                 )
+            }
+            item {
+                HorizontalDivider()
+                Spacer(Modifier.height(4.dp))
+                Text("MCP Servers", style = MaterialTheme.typography.titleSmall)
+                Spacer(Modifier.height(8.dp))
+                Row(
+                    Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Column(Modifier.weight(1f)) {
+                        Text("ВкусВилл", style = MaterialTheme.typography.bodyMedium)
+                        val statusText = when (mcpStatus) {
+                            is McpConnectionStatus.Disconnected -> if (vkusVillEnabled) "" else "Отключён"
+                            is McpConnectionStatus.Connecting -> "Подключение..."
+                            is McpConnectionStatus.Connected -> "Подключён · ${mcpStatus.tools.size} инструментов"
+                            is McpConnectionStatus.Error -> "Ошибка: ${mcpStatus.message}"
+                        }
+                        val statusColor = when (mcpStatus) {
+                            is McpConnectionStatus.Connected -> MaterialTheme.colorScheme.primary
+                            is McpConnectionStatus.Error -> MaterialTheme.colorScheme.error
+                            else -> MaterialTheme.colorScheme.onSurfaceVariant
+                        }
+                        if (statusText.isNotEmpty()) {
+                            Text(
+                                statusText,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = statusColor
+                            )
+                        }
+                    }
+                    Switch(
+                        checked = vkusVillEnabled,
+                        onCheckedChange = { onToggleVkusVill(it) }
+                    )
+                }
+                if (mcpStatus is McpConnectionStatus.Connected && mcpStatus.tools.isNotEmpty()) {
+                    Spacer(Modifier.height(8.dp))
+                    mcpStatus.tools.forEach { tool ->
+                        Row(
+                            Modifier
+                                .fillMaxWidth()
+                                .padding(vertical = 2.dp),
+                            verticalAlignment = Alignment.Top
+                        ) {
+                            Text(
+                                "• ${tool.name}",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.width(180.dp)
+                            )
+                            Text(
+                                tool.description,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
+                                modifier = Modifier.weight(1f)
+                            )
+                        }
+                    }
+                }
             }
             item {
                 Button(
@@ -1124,6 +1196,40 @@ private fun FsmMessageBubble(message: Message) {
     }
 }
 
+// Matches [label](url) and bare https?:// URLs
+private val MARKDOWN_LINK_RE = Regex("""\[([^\]]+)]\((https?://[^)]+)\)|(https?://\S+)""")
+
+@Composable
+private fun LinkedText(text: String, color: androidx.compose.ui.graphics.Color, style: androidx.compose.ui.text.TextStyle) {
+    val uriHandler = LocalUriHandler.current
+    val linkColor = Color(0xFF4FC3F7)
+
+    val annotated = buildAnnotatedString {
+        var last = 0
+        for (match in MARKDOWN_LINK_RE.findAll(text)) {
+            append(text.substring(last, match.range.first))
+            val (label, mdUrl, bareUrl) = match.destructured
+            val url = mdUrl.ifEmpty { bareUrl }
+            val display = label.ifEmpty { url }
+            pushStringAnnotation("URL", url)
+            pushStyle(SpanStyle(color = linkColor))
+            append(display)
+            pop(); pop()
+            last = match.range.last + 1
+        }
+        append(text.substring(last))
+    }
+
+    ClickableText(
+        text = annotated,
+        style = style.copy(color = color),
+        onClick = { offset ->
+            annotated.getStringAnnotations("URL", offset, offset)
+                .firstOrNull()?.let { uriHandler.openUri(it.item) }
+        }
+    )
+}
+
 @Composable
 private fun MessageBubble(message: Message, followingMeta: MessageMeta? = null) {
     val isUser = message.isFromUser
@@ -1146,12 +1252,13 @@ private fun MessageBubble(message: Message, followingMeta: MessageMeta? = null) 
                 modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp)
             )
             Surface(shape = shape, color = bubbleColor, modifier = Modifier.widthIn(max = 260.dp)) {
-                Text(
-                    text = message.content,
-                    color = textColor,
-                    style = MaterialTheme.typography.bodyMedium,
-                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)
-                )
+                Box(modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)) {
+                    LinkedText(
+                        text = message.content,
+                        color = textColor,
+                        style = MaterialTheme.typography.bodyMedium,
+                    )
+                }
             }
             if (isUser) {
                 followingMeta?.let { meta ->

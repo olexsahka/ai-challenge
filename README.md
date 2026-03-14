@@ -39,6 +39,9 @@ AgentViewModel           LLMAgent
 | `MessageDao` | Insert and observe messages by session |
 | `SummaryDao` | Upsert and observe compression summaries by session |
 | `AnthropicApi` | Retrofit interface; `POST /responses` and `GET /models` endpoints |
+| `AgentRunner` | Standalone ReAct-loop agent (max 6 iterations); integrates MCP tools dynamically into the system prompt; executed via `AgentViewModel.runAgentWithMcp` when ВкусВилл is enabled |
+| `McpClient` | Raw HTTP client for the MCP protocol (JSON-RPC over HTTP); handles `initialize → notifications/initialized → tools/list → tools/call` handshake |
+| `McpRepository` | Thin wrapper around `McpClient`; persists `vkusVillEnabled` in SharedPreferences; proxies `connect()`, `callTool()`, `disconnect()` |
 
 ### Component interactions
 
@@ -145,6 +148,30 @@ Stored in the `summaries` table with:
 
 When compression is enabled and a summary exists for the active session, a pinned banner appears above the message list showing the first sentence of the summary. Tapping it opens a dialog with the full summary text. The banner updates reactively via `observeSummary` → `StateFlow`.
 
+### MCP Integration (ВкусВилл)
+
+When the ВкусВилл toggle is enabled in context settings, all messages are routed through `AgentRunner` instead of `LLMAgent.sendMessage`.
+
+**Connection flow (on toggle or app start):**
+1. `McpClient` sends `initialize` → receives `Mcp-Session-Id` header
+2. Sends `notifications/initialized` with the session ID
+3. Sends `tools/list` → receives available tools (name, description, JSON Schema)
+
+**Per-message flow:**
+1. `AgentRunner.run()` calls `mcpRepository.connect()` to get the current tool list
+2. `buildSystemPrompt(tools)` injects tool names and field descriptions into the system prompt
+3. The ReAct loop parses `THOUGHT / ACTION / INPUT` from the model response
+4. If `ACTION` matches a known MCP tool name, `mcpRepository.callTool(name, JSONObject(input))` is called
+5. The tool result is appended as `OBSERVATION` and the loop continues
+6. If the model responds without the ReAct format (plain text), the whole response is treated as `FINAL_ANSWER`
+7. On `FINAL_ANSWER`, the answer is saved via `agent.saveAssistantMessage(sessionId, content, nodeId)`
+
+**UI:**
+- Context settings bottom sheet → "MCP Servers" section with ВкусВилл toggle
+- Connection status: Подключение... / Подключён · N инструментов / Ошибка: ...
+- Expandable tool list under the toggle when connected
+- Clickable links in assistant messages (markdown `[label](url)` and bare URLs) open the browser
+
 ### Memory store
 
 `AgentMemory` wraps `SharedPreferences` as a flat key-value store shared across all sessions. Entries are displayed and managed in the context settings bottom sheet. Individual keys can be deleted; "Clear all" is available with a confirmation dialog.
@@ -237,7 +264,7 @@ Accessible via the gear icon in the top bar. Stored in the `sessions` table:
 
 | Фаза | Статус |
 |---|---|
-| Фаза 0 — Baseline тесты | ✅ Завершена (145 тестов) |
+| Фаза 0 — Baseline тесты | ✅ Завершена (160 тестов) |
 | Фаза 1 — Domain слой | 🔲 Не начата |
 | Фаза 2 — Platform абстракции | 🔲 Не начата |
 | Фаза 3 — Shared KMP модуль | 🔲 Не начата |
@@ -249,6 +276,7 @@ Accessible via the gear icon in the top bar. Stored in the `sessions` table:
 ```
 app/src/test/
 ├── AgentRunnerTest.kt           — ReAct loop, все действия, maxIterations (16 тестов)
+├── AgentRunnerMcpTest.kt        — MCP интеграция: plain-text fallback, tool execution, JSON args, prompt (15 тестов)
 ├── BuildHistoryTest.kt          — все 5 стратегий памяти (12 тестов)
 ├── BuildInstructionsTest.kt     — сборка системного промпта (11 тестов)
 ├── SendMessageTest.kt           — sendMessage full flow + persistence (11 тестов)
@@ -278,6 +306,7 @@ app/src/test/
 | Local persistence | Room (sessions + messages + summaries) |
 | Memory store | `SharedPreferences` |
 | API backend | OpenAI-compatible proxy (`api.proxyapi.ru`) |
+| MCP | JSON-RPC over HTTP (`mcp001.vkusvill.ru/mcp`); OkHttp directly (not Retrofit) |
 
 ---
 
