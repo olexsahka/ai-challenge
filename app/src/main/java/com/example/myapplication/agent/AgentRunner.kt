@@ -3,6 +3,7 @@ package com.example.myapplication.agent
 import com.example.myapplication.data.api.AnthropicApi
 import com.example.myapplication.data.api.model.ChatRequest
 import com.example.myapplication.data.api.model.InputMessage
+import com.example.myapplication.data.api.model.extractText
 
 private const val MAX_ITERATIONS = 6
 private const val MODEL = "gpt-4o-mini"
@@ -59,11 +60,7 @@ class AgentRunner(
                 break
             }
 
-            val rawText = response.output
-                .firstOrNull { it.type == "message" }
-                ?.content
-                ?.firstOrNull { it.type == "output_text" }
-                ?.text ?: break
+            val rawText = response.extractText() ?: break
 
             conversationHistory.add(InputMessage(role = "assistant", content = rawText))
 

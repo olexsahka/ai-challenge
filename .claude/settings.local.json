@@ -3,7 +3,8 @@
     "allow": [
       "Bash(./gradlew :app:testDebugUnitTest:*)",
       "Bash(./gradlew :app:compileDebugKotlin 2>&1 | grep -E \"^e:|FAILED|BUILD\" | head -10)",
-      "Bash(./gradlew :app:compileDebugKotlin 2>&1 | tail -60)"
+      "Bash(./gradlew :app:compileDebugKotlin 2>&1 | tail -60)",
+      "Bash(for f:*)"
     ]
   },
   "spinnerTipsEnabled": false

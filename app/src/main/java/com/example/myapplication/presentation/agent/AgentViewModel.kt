@@ -12,6 +12,7 @@ import com.example.myapplication.data.repository.UserProfileRepository
 import com.example.myapplication.data.db.entity.BranchNodeEntity
 import com.example.myapplication.data.db.entity.FactEntity
 import com.example.myapplication.data.db.entity.MemoryStrategy
+import com.example.myapplication.data.db.entity.SessionContextConfig
 import com.example.myapplication.data.db.entity.SessionEntity
 import com.example.myapplication.data.db.entity.SummaryEntity
 import com.example.myapplication.data.db.entity.TaskFsmEntity
@@ -56,10 +57,7 @@ class AgentViewModel(
     val uiState: StateFlow<AgentUiState> = _uiState.asStateFlow()
 
     private val _activeSessionId = MutableStateFlow<String?>(null)
-    private var summaryJob: Job? = null
-    private var factsJob: Job? = null
-    private var branchJob: Job? = null
-    private var fsmJob: Job? = null
+    private val sessionJobs = mutableMapOf<String, Job>()
 
     private val _activeNodeId = MutableStateFlow<String?>(null)
 
@@ -143,24 +141,14 @@ class AgentViewModel(
     fun showSettings() = _uiState.update { it.copy(showSettings = true) }
     fun hideSettings() = _uiState.update { it.copy(showSettings = false) }
 
-    fun saveSessionContext(
-        systemPrompt: String,
-        model: String,
-        temperature: Float,
-        compressionEnabled: Boolean,
-        compressionN: Int,
-        compressionM: Int,
-        memoryStrategy: String,
-        slidingWindowN: Int,
-        stickyFactsN: Int
-    ) {
+    fun saveSessionContext(config: SessionContextConfig) {
         val sessionId = _uiState.value.activeSession?.id ?: return
         viewModelScope.launch {
-            agent.updateSessionContext(sessionId, systemPrompt, model, temperature, compressionEnabled, compressionN, compressionM, memoryStrategy, slidingWindowN, stickyFactsN)
+            agent.updateSessionContext(sessionId, config)
             val updated = agent.getSession(sessionId)
             if (updated != null) {
                 _uiState.update { it.copy(activeSession = updated, showSettings = false) }
-                if (memoryStrategy == MemoryStrategy.BRANCHING.name && _uiState.value.activeNodeId == null) {
+                if (config.memoryStrategy == MemoryStrategy.BRANCHING.name && _uiState.value.activeNodeId == null) {
                     val root = agent.getOrCreateRootNode(sessionId)
                     _activeNodeId.value = root.id
                     _uiState.update { it.copy(activeNodeId = root.id) }
@@ -203,26 +191,26 @@ class AgentViewModel(
         _activeSessionId.value = session.id
         _activeNodeId.value = null
         _uiState.update { it.copy(activeSession = session, activeSummary = null, activeFacts = emptyList(), branchNodes = emptyList(), activeNodeId = null) }
-        summaryJob?.cancel()
-        summaryJob = viewModelScope.launch {
+
+        sessionJobs.values.forEach { it.cancel() }
+        sessionJobs.clear()
+
+        sessionJobs["summary"] = viewModelScope.launch {
             agent.observeSummary(session.id).collect { summary ->
                 _uiState.update { it.copy(activeSummary = summary) }
             }
         }
-        factsJob?.cancel()
-        factsJob = viewModelScope.launch {
+        sessionJobs["facts"] = viewModelScope.launch {
             agent.observeFacts(session.id).collect { facts ->
                 _uiState.update { it.copy(activeFacts = facts) }
             }
         }
-        branchJob?.cancel()
-        branchJob = viewModelScope.launch {
+        sessionJobs["branches"] = viewModelScope.launch {
             agent.observeBranchNodes(session.id).collect { nodes ->
                 _uiState.update { it.copy(branchNodes = nodes) }
             }
         }
-        fsmJob?.cancel()
-        fsmJob = viewModelScope.launch {
+        sessionJobs["fsm"] = viewModelScope.launch {
             agent.observeTaskFsm(session.id).collect { fsm ->
                 _uiState.update { it.copy(taskFsmState = fsm) }
             }

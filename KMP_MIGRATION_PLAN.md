@@ -73,7 +73,7 @@ jsMain                 — localStorage, Ktor-JS engine, actual-реализац
 
 | Фаза | Статус |
 |---|---|
-| Фаза 0 — Baseline тесты | ✅ Завершена (86 тестов, 0 failures) |
+| Фаза 0 — Baseline тесты | ✅ Завершена (145 тестов, 0 failures) |
 | Фаза 1 — Domain слой | 🔲 Не начата |
 | Фаза 2 — Platform абстракции | 🔲 Не начата |
 | Фаза 3 — Shared KMP модуль | 🔲 Не начата |
@@ -88,7 +88,7 @@ jsMain                 — localStorage, Ktor-JS engine, actual-реализац
 
 > **Почему важно делать первым:** без тестов невозможно безопасно рефакторить. Тесты написаны против текущего кода, а не против будущего — они описывают реальное поведение, а не желаемое.
 
-**Результат: 86 тестов, 0 failures, 0 errors. Baseline зафиксирован.**
+**Результат: 145 тестов, 0 failures, 0 errors. Baseline зафиксирован.**
 
 ### Написанные тестовые файлы
 
@@ -100,7 +100,11 @@ jsMain                 — localStorage, Ktor-JS engine, actual-реализац
 | `SendMessageTest.kt` | 11 | Persistence user/assistant msg, title auto-set, token counts, error cases, STICKY_FACTS trigger |
 | `BuildBranchHistoryTest.kt` | 9 | Один узел, child→root, цепочка из 3, persistence, first-msg auto-label |
 | `AgentMemoryTest.kt` | 10 | store/recall, forget, forgetAll, toContextString (пусто / с данными) |
-| `UserProfileRepositoryTest.kt` | 11 | toggle off, profile only, task only, оба включены, trim whitespace |
+| `UserProfileRepositoryTest.kt` | 10 | toggle off, profile only, task only, оба включены, trim whitespace |
+| `TaskFsmRepositoryTest.kt` | 24 | FSM state transitions, pause/resume, autoRun, error handling |
+| `FsmLLMAgentTest.kt` | 14 | FSM интеграция в LLMAgent: ручной/авто режим, обработка ошибок |
+| `ConstraintsRepositoryTest.kt` | 8 | toContextBlock, defaults, enabled/disabled |
+| `ConstraintsCheckTest.kt` | 13 | pre/post-check нарушений, альтернатива, toInstructionsBlock |
 | `LLMAgentTestBase.kt` | — | Инфраструктура: FakeSessionDao, FakeMessageDao, FakeSummaryDao, FakeFactDao, FakeBranchNodeDao, builders |
 
 ### Изменения в конфигурации сборки
@@ -118,6 +122,7 @@ jsMain                 — localStorage, Ktor-JS engine, actual-реализац
 - [x] **0.6** Тесты `buildBranchHistory` — `BuildBranchHistoryTest.kt`
 - [x] **0.7** Integration тест `sendMessage` с FakeApi + FakeDAO — `SendMessageTest.kt`
 - [x] **0.8** Все 86 тестов проходят — **baseline зафиксирован**
+- [x] **0.9** Расширение baseline: FSM, Constraints, Branching тесты — итого **145 тестов**
 
 ---
 
@@ -187,6 +192,20 @@ data class BranchNode(
 )
 ```
 
+### Примечание по рефакторингу (выполнен до Фазы 1)
+
+До начала Фазы 1 был проведён рефакторинг проекта:
+
+- **`ChatResponse.extractText()`** — extension-функция, единственное место извлечения текста из API-ответа. Заменила 6 дублирующих цепочек `.output.firstOrNull { it.type == "message" }?.content?.firstOrNull { it.type == "output_text" }?.text` в `LLMAgent`, `ChatRepositoryImpl`, `AgentRunner`.
+- **`SessionContextConfig`** — data class для 9 полей настроек сессии. Заменила 10-параметрический `updateSessionContext()` и 9-параметрическую лямбду `onSave` в `ContextSettingsSheet`.
+- **`askConstraintsChecker()`** — приватный helper, устранил дублирование между `checkConstraintViolation` и `checkResponseViolation`.
+- **`buildUserInfoLines()`** — приватный helper в `UserProfileRepository`, устранил дублирование между `userInformationContextString()` и `toContextString()`.
+- **`sessionJobs: Map<String, Job>`** в `AgentViewModel` — заменил 4 отдельных Job-поля.
+
+При выполнении Фазы 1 учесть:
+- `SessionContextConfig` — кандидат для переноса в `domain/` (чистый Kotlin data class без аннотаций).
+- `extractText()` переедет вместе с `ChatResponse` в `shared/commonMain/data/api/model/`.
+
 ### 1.2 Создать интерфейсы репозиториев
 
 Новые файлы в `domain/repository/`:
@@ -198,9 +217,7 @@ interface SessionRepository {
     suspend fun getLatest(): Session?
     suspend fun getById(id: String): Session?
     suspend fun insert(session: Session)
-    suspend fun updateContext(id: String, systemPrompt: String, model: String,
-        temperature: Float, compressionEnabled: Boolean, compressionN: Int,
-        compressionM: Int, memoryStrategy: String, slidingWindowN: Int, stickyFactsN: Int)
+    suspend fun updateContext(id: String, config: SessionContextConfig)  // data class, не 9 параметров
     suspend fun updateTitle(id: String, title: String)
     suspend fun countAssistantMessages(sessionId: String): Int
 }
@@ -307,13 +324,13 @@ single { LLMAgent(get(), get(), get(), get(), get(), get(), get()) }
 
 ### Контрольный список
 
-- [ ] **1.1** Создать `Session`, `MessageData`, `SummaryData`, `FactData`, `BranchNode` в `domain/model/`
+- [ ] **1.1** Создать `Session`, `MessageData`, `SummaryData`, `FactData`, `BranchNode` в `domain/model/`; перенести туда же `SessionContextConfig` из `data/db/entity/`
 - [ ] **1.2** Создать 5 интерфейсов репозиториев в `domain/repository/`
 - [ ] **1.3** Создать Room-реализации в `data/repository/room/` с маппингом Entity ↔ domain
 - [ ] **1.4** Переписать `LLMAgent` — убрать все DAO и Entity, работать только через интерфейсы
 - [ ] **1.5** Обновить `AppModule.kt` — внедрять репозитории вместо DAO
 - [ ] **1.6** Обновить `LLMAgentTestBase.kt` под новые интерфейсы
-- [ ] **1.7** `./gradlew :app:testDebugUnitTest` — все 86 тестов проходят
+- [ ] **1.7** `./gradlew :app:testDebugUnitTest` — все 145 тестов проходят
 
 ---
 
@@ -543,7 +560,7 @@ val memory = AgentMemory(storage)
 - [ ] **2.5** Создать `LLMApiClient` интерфейс, переключить `LLMAgent` на него
 - [ ] **2.6** Обновить `AppModule.kt`
 - [ ] **2.7** Обновить тесты: убрать Mockito-моки `AgentMemory`, использовать `FakeKeyValueStorage`
-- [ ] **2.8** `./gradlew :app:testDebugUnitTest` — все тесты проходят
+- [ ] **2.8** `./gradlew :app:testDebugUnitTest` — все 145 тестов проходят
 - [ ] **2.9** `./gradlew :app:assembleDebug` — приложение собирается и работает
 
 ---

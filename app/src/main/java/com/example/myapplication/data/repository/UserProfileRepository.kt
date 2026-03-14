@@ -51,32 +51,25 @@ class UserProfileRepository(context: Context) {
             putBoolean(KEY_TASK_ENABLED, value.enabled)
         }
 
+    private fun buildUserInfoLines(info: UserInformation): List<String> = buildList {
+        if (info.name.isNotBlank()) add("Name: ${info.name.trim()}")
+        if (info.occupation.isNotBlank()) add("Occupation: ${info.occupation.trim()}")
+        if (info.language.isNotBlank()) add("Language: ${info.language.trim()}")
+        if (info.responseStyle.isNotBlank()) add("Response style: ${info.responseStyle.trim()}")
+        if (info.responseFormat.isNotBlank()) add("Response format: ${info.responseFormat.trim()}")
+        if (info.additionalNotes.isNotBlank()) add("Notes: ${info.additionalNotes.trim()}")
+    }
+
     fun userInformationContextString(): String {
-        val info = userInformation
-        val infoLines = mutableListOf<String>()
-        if (info.name.isNotBlank()) infoLines.add("Name: ${info.name.trim()}")
-        if (info.occupation.isNotBlank()) infoLines.add("Occupation: ${info.occupation.trim()}")
-        if (info.language.isNotBlank()) infoLines.add("Language: ${info.language.trim()}")
-        if (info.responseStyle.isNotBlank()) infoLines.add("Response style: ${info.responseStyle.trim()}")
-        if (info.responseFormat.isNotBlank()) infoLines.add("Response format: ${info.responseFormat.trim()}")
-        if (info.additionalNotes.isNotBlank()) infoLines.add("Notes: ${info.additionalNotes.trim()}")
-        return if (infoLines.isNotEmpty()) "User information:\n${infoLines.joinToString("\n")}" else ""
+        val lines = buildUserInfoLines(userInformation)
+        return if (lines.isNotEmpty()) "User information:\n${lines.joinToString("\n")}" else ""
     }
 
     fun toContextString(): String {
         val parts = mutableListOf<String>()
 
-        val info = userInformation
-        val infoLines = mutableListOf<String>()
-        if (info.name.isNotBlank()) infoLines.add("Name: ${info.name.trim()}")
-        if (info.occupation.isNotBlank()) infoLines.add("Occupation: ${info.occupation.trim()}")
-        if (info.language.isNotBlank()) infoLines.add("Language: ${info.language.trim()}")
-        if (info.responseStyle.isNotBlank()) infoLines.add("Response style: ${info.responseStyle.trim()}")
-        if (info.responseFormat.isNotBlank()) infoLines.add("Response format: ${info.responseFormat.trim()}")
-        if (info.additionalNotes.isNotBlank()) infoLines.add("Notes: ${info.additionalNotes.trim()}")
-        if (infoLines.isNotEmpty()) {
-            parts.add("User information:\n${infoLines.joinToString("\n")}")
-        }
+        val lines = buildUserInfoLines(userInformation)
+        if (lines.isNotEmpty()) parts.add("User information:\n${lines.joinToString("\n")}")
 
         val task = taskMemory
         if (task.enabled && (task.name.isNotBlank() || task.description.isNotBlank())) {

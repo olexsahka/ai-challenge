@@ -82,6 +82,7 @@ import com.example.myapplication.data.repository.UserInformation
 import com.example.myapplication.data.db.entity.BranchNodeEntity
 import com.example.myapplication.data.db.entity.FactEntity
 import com.example.myapplication.data.db.entity.MemoryStrategy
+import com.example.myapplication.data.db.entity.SessionContextConfig
 import com.example.myapplication.data.db.entity.SessionEntity
 import com.example.myapplication.data.db.entity.TaskFsmEntity
 import com.example.myapplication.data.db.entity.TaskStage
@@ -125,9 +126,7 @@ fun AgentScreen(modifier: Modifier = Modifier, viewModel: AgentViewModel = koinV
                 userInformation = uiState.userInformation,
                 taskMemory = uiState.taskMemory,
                 constraints = uiState.constraints,
-                onSave = { prompt, model, temp, compressionEnabled, compressionN, compressionM, memoryStrategy, slidingWindowN, stickyFactsN ->
-                    viewModel.saveSessionContext(prompt, model, temp, compressionEnabled, compressionN, compressionM, memoryStrategy, slidingWindowN, stickyFactsN)
-                },
+                onSave = { config -> viewModel.saveSessionContext(config) },
                 onSaveUserInformation = { viewModel.saveUserInformation(it) },
                 onSaveTaskMemory = { viewModel.saveTaskMemory(it) },
                 onSaveConstraints = { viewModel.saveConstraints(it) },
@@ -321,7 +320,7 @@ private fun ContextSettingsSheet(
     userInformation: UserInformation,
     taskMemory: TaskMemory,
     constraints: Constraints,
-    onSave: (systemPrompt: String, model: String, temperature: Float, compressionEnabled: Boolean, compressionN: Int, compressionM: Int, memoryStrategy: String, slidingWindowN: Int, stickyFactsN: Int) -> Unit,
+    onSave: (SessionContextConfig) -> Unit,
     onSaveUserInformation: (UserInformation) -> Unit,
     onSaveTaskMemory: (TaskMemory) -> Unit,
     onSaveConstraints: (Constraints) -> Unit,
@@ -624,7 +623,7 @@ private fun ContextSettingsSheet(
                         val swN = slidingWindowNText.toIntOrNull()?.coerceAtLeast(1) ?: 5
                         val compressionActive = selectedStrategy == MemoryStrategy.COMPRESSION.name
                         val sfN = stickyFactsNText.toIntOrNull()?.coerceAtLeast(1) ?: 5
-                        onSave(systemPrompt, model, temperature, compressionActive, n, m, selectedStrategy, swN, sfN)
+                        onSave(SessionContextConfig(systemPrompt, model, temperature, compressionActive, n, m, selectedStrategy, swN, sfN))
                         onSaveUserInformation(UserInformation(userNameText, userOccupationText, userLanguageText, responseStyleText, responseFormatText, additionalNotesText))
                         onSaveTaskMemory(TaskMemory(taskNameText, taskDescriptionText, taskEnabledState))
                         onSaveConstraints(Constraints(constraintsRulesText, constraintsEnabledState))

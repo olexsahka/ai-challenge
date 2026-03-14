@@ -20,3 +20,9 @@ data class UsageInfo(
     val input_tokens: Int,
     val output_tokens: Int
 )
+
+fun ChatResponse.extractText(): String? =
+    output.firstOrNull { it.type == "message" }
+        ?.content
+        ?.firstOrNull { it.type == "output_text" }
+        ?.text

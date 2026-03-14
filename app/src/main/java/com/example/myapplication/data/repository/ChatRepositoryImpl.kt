@@ -3,6 +3,7 @@ package com.example.myapplication.data.repository
 import com.example.myapplication.data.api.AnthropicApi
 import com.example.myapplication.data.api.model.ChatRequest
 import com.example.myapplication.data.api.model.InputMessage
+import com.example.myapplication.data.api.model.extractText
 import com.example.myapplication.domain.model.Message
 import com.example.myapplication.domain.model.MessageMeta
 import com.example.myapplication.domain.repository.ChatRepository
@@ -32,11 +33,7 @@ class ChatRepositoryImpl(private val api: AnthropicApi) : ChatRepository {
             val startMs = System.currentTimeMillis()
             val response = api.sendMessage(request)
             val durationMs = System.currentTimeMillis() - startMs
-            val text = response.output
-                .firstOrNull { it.type == "message" }
-                ?.content
-                ?.firstOrNull { it.type == "output_text" }
-                ?.text
+            val text = response.extractText()
                 ?: return Result.failure(Exception("Empty response from API"))
             val meta = MessageMeta(
                 inputTokens = response.usage?.input_tokens ?: 0,

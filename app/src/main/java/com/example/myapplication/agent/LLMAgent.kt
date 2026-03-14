@@ -3,6 +3,7 @@ package com.example.myapplication.agent
 import com.example.myapplication.data.api.AnthropicApi
 import com.example.myapplication.data.api.model.ChatRequest
 import com.example.myapplication.data.api.model.InputMessage
+import com.example.myapplication.data.api.model.extractText
 import com.example.myapplication.data.db.dao.BranchNodeDao
 import com.example.myapplication.data.db.dao.FactDao
 import com.example.myapplication.data.db.dao.MessageDao
@@ -14,6 +15,7 @@ import com.example.myapplication.data.db.entity.BranchNodeEntity
 import com.example.myapplication.data.db.entity.FactEntity
 import com.example.myapplication.data.db.entity.MessageEntity
 import com.example.myapplication.data.db.entity.MemoryStrategy
+import com.example.myapplication.data.db.entity.SessionContextConfig
 import com.example.myapplication.data.db.entity.SessionEntity
 import com.example.myapplication.data.db.entity.SummaryEntity
 import com.example.myapplication.data.db.entity.TaskFsmEntity
@@ -79,19 +81,19 @@ class LLMAgent(
         return session
     }
 
-    suspend fun updateSessionContext(
-        sessionId: String,
-        systemPrompt: String,
-        model: String,
-        temperature: Float,
-        compressionEnabled: Boolean,
-        compressionN: Int,
-        compressionM: Int,
-        memoryStrategy: String,
-        slidingWindowN: Int,
-        stickyFactsN: Int
-    ) {
-        sessionDao.updateContext(sessionId, systemPrompt, model, temperature, compressionEnabled, compressionN, compressionM, memoryStrategy, slidingWindowN, stickyFactsN)
+    suspend fun updateSessionContext(sessionId: String, config: SessionContextConfig) {
+        sessionDao.updateContext(
+            sessionId,
+            config.systemPrompt,
+            config.model,
+            config.temperature,
+            config.compressionEnabled,
+            config.compressionN,
+            config.compressionM,
+            config.memoryStrategy,
+            config.slidingWindowN,
+            config.stickyFactsN
+        )
     }
 
     fun observeFacts(sessionId: String): Flow<List<FactEntity>> =
@@ -168,11 +170,7 @@ class LLMAgent(
             val response = api.sendMessage(request)
             val durationMs = System.currentTimeMillis() - startMs
 
-            val text = response.output
-                .firstOrNull { it.type == "message" }
-                ?.content
-                ?.firstOrNull { it.type == "output_text" }
-                ?.text
+            val text = response.extractText()
                 ?: return Result.failure(Exception("Empty response"))
 
             val assistantEntity = MessageEntity(
@@ -346,11 +344,7 @@ class LLMAgent(
             val response = api.sendMessage(request)
             val durationMs = System.currentTimeMillis() - startMs
 
-            val text = response.output
-                .firstOrNull { it.type == "message" }
-                ?.content
-                ?.firstOrNull { it.type == "output_text" }
-                ?.text
+            val text = response.extractText()
                 ?: return Result.failure(Exception("Empty response"))
 
             val assistantEntity = MessageEntity(
@@ -367,10 +361,7 @@ class LLMAgent(
             messageDao.insert(assistantEntity)
 
             if (sessionDao.countAssistantMessages(sessionId) == 1) {
-                val autoTitle = text.split(Regex("(?<=[.!?])\\s+")).firstOrNull()
-                    ?.trim()?.take(50)
-                    ?: text.take(50)
-                sessionDao.updateTitle(sessionId, autoTitle)
+                updateSessionTitle(sessionId, text)
             }
 
             val strategy = runCatching { MemoryStrategy.valueOf(session.memoryStrategy) }.getOrDefault(MemoryStrategy.FULL)
@@ -396,6 +387,20 @@ class LLMAgent(
         }
     }
 
+    private suspend fun askConstraintsChecker(session: SessionEntity, prompt: String): String? {
+        val request = ChatRequest(
+            model = session.model,
+            instructions = null,
+            input = listOf(InputMessage(role = "user", content = prompt)),
+            temperature = null
+        )
+        val raw = runCatching { api.sendMessage(request) }.getOrNull()
+            ?.extractText()?.trim() ?: return null
+        return if (raw.startsWith("VIOLATION:", ignoreCase = true)) {
+            raw.removePrefix("VIOLATION:").removePrefix("violation:").trim()
+        } else null
+    }
+
     /**
      * Checks if the userText violates any active constraints by asking the LLM.
      * Returns a non-null violation description string if violated, null if OK.
@@ -418,22 +423,7 @@ Reply with EXACTLY one of:
 
 Reply with nothing else."""
 
-        val request = ChatRequest(
-            model = session.model,
-            instructions = null,
-            input = listOf(InputMessage(role = "user", content = prompt)),
-            temperature = null
-        )
-        val response = runCatching { api.sendMessage(request) }.getOrNull() ?: return null
-        val raw = response.output
-            .firstOrNull { it.type == "message" }
-            ?.content
-            ?.firstOrNull { it.type == "output_text" }
-            ?.text?.trim() ?: return null
-
-        return if (raw.startsWith("VIOLATION:", ignoreCase = true)) {
-            raw.removePrefix("VIOLATION:").removePrefix("violation:").trim()
-        } else null
+        return askConstraintsChecker(session, prompt)
     }
 
     /**
@@ -472,11 +462,7 @@ Reply with only the suggested alternative request text, without any preamble."""
         )
         val alternativeSuggestion = runCatching { api.sendMessage(altRequest) }
             .getOrNull()
-            ?.output
-            ?.firstOrNull { it.type == "message" }
-            ?.content
-            ?.firstOrNull { it.type == "output_text" }
-            ?.text
+            ?.extractText()
             ?.trim()
 
         val content = buildString {
@@ -710,11 +696,7 @@ Reply with only the suggested alternative request text, without any preamble."""
             val startMs = System.currentTimeMillis()
             val response = api.sendMessage(request)
             val durationMs = System.currentTimeMillis() - startMs
-            val text = response.output
-                .firstOrNull { it.type == "message" }
-                ?.content
-                ?.firstOrNull { it.type == "output_text" }
-                ?.text ?: return Result.failure(Exception("Empty response"))
+            val text = response.extractText() ?: return Result.failure(Exception("Empty response"))
             val entity = MessageEntity(
                 id = UUID.randomUUID().toString(),
                 sessionId = session.id,
@@ -755,22 +737,7 @@ Reply with EXACTLY one of:
 
 Reply with nothing else."""
 
-        val request = ChatRequest(
-            model = session.model,
-            instructions = null,
-            input = listOf(InputMessage(role = "user", content = prompt)),
-            temperature = null
-        )
-        val response = runCatching { api.sendMessage(request) }.getOrNull() ?: return null
-        val raw = response.output
-            .firstOrNull { it.type == "message" }
-            ?.content
-            ?.firstOrNull { it.type == "output_text" }
-            ?.text?.trim() ?: return null
-
-        return if (raw.startsWith("VIOLATION:", ignoreCase = true)) {
-            raw.removePrefix("VIOLATION:").removePrefix("violation:").trim()
-        } else null
+        return askConstraintsChecker(session, prompt)
     }
 
     private suspend fun savePromptMessage(session: SessionEntity, text: String): MessageEntity {
@@ -810,11 +777,7 @@ Reply with nothing else."""
             val startMs = System.currentTimeMillis()
             val response = api.sendMessage(request)
             val durationMs = System.currentTimeMillis() - startMs
-            val raw = response.output
-                .firstOrNull { it.type == "message" }
-                ?.content
-                ?.firstOrNull { it.type == "output_text" }
-                ?.text ?: return null
+            val raw = response.extractText() ?: return null
             val text = "**$stageLabel**\n\n$raw"
             StageResponse(
                 text = text,
@@ -954,12 +917,8 @@ Extract facts about: goals, constraints, preferences, decisions, agreements, nam
             input = listOf(InputMessage(role = "user", content = prompt)),
             temperature = null
         )
-        val response = runCatching { api.sendMessage(request) }.getOrNull() ?: return
-        val raw = response.output
-            .firstOrNull { it.type == "message" }
-            ?.content
-            ?.firstOrNull { it.type == "output_text" }
-            ?.text ?: return
+        val raw = runCatching { api.sendMessage(request) }.getOrNull()
+            ?.extractText() ?: return
 
         val newFacts = raw.lines()
             .mapNotNull { line ->
@@ -999,12 +958,7 @@ Extract facts about: goals, constraints, preferences, decisions, agreements, nam
             input = listOf(InputMessage(role = "user", content = "Summarize this conversation:\n\n$historyText")),
             temperature = null
         )
-        val response = api.sendMessage(summaryRequest)
-        val summary = response.output
-            .firstOrNull { it.type == "message" }
-            ?.content
-            ?.firstOrNull { it.type == "output_text" }
-            ?.text
+        val summary = api.sendMessage(summaryRequest).extractText()
             ?: "No summary available."
 
         summaryDao.upsert(

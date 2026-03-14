@@ -11,7 +11,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 # Build and install on connected device
 ./gradlew installDebug
 
-# Run all unit tests (127 тестов, 0 failures)
+# Run all unit tests (145 тестов, 0 failures)
 ./gradlew :app:testDebugUnitTest
 
 # Run instrumented tests (requires connected device/emulator)
@@ -101,7 +101,7 @@ Stored globally in SharedPreferences. When enabled, injected into FSM instructio
 
 ## Testing
 
-Unit тесты — 157 тестов, 0 failures.
+Unit тесты — 145 тестов, 0 failures.
 
 ```
 app/src/test/java/com/example/myapplication/
@@ -122,6 +122,126 @@ app/src/test/java/com/example/myapplication/
 **Тестовая инфраструктура:** вместо реальных DAO используются `FakeSessionDao`, `FakeMessageDao`, `FakeSummaryDao`, `FakeFactDao`, `FakeBranchNodeDao` (in-memory, без Room/Android). `AgentMemory` и `UserProfileRepository` мокируются через Mockito (изолируют `Context`/`SharedPreferences`).
 
 **Важно для будущих тестов:** `CapturingAnthropicApi.lastRequest` перезаписывается на каждый API вызов. Для стратегий с двумя вызовами (STICKY_FACTS, COMPRESSION) использовать `SequentialAnthropicApi.requests.first()` чтобы получить именно главный запрос.
+
+## Coding Guidelines
+
+Правила написания кода, выработанные в процессе рефакторинга проекта.
+
+### Устранение дублирования
+
+**Extension-функции для повторяющихся операций.**
+Если одно и то же преобразование встречается в 2+ местах — выноси в extension.
+
+```kotlin
+// BAD — повторяется 5+ раз в проекте:
+response.output.firstOrNull { it.type == "message" }
+    ?.content?.firstOrNull { it.type == "output_text" }?.text
+
+// GOOD — один extension в ChatResponse.kt:
+fun ChatResponse.extractText(): String? =
+    output.firstOrNull { it.type == "message" }
+        ?.content?.firstOrNull { it.type == "output_text" }?.text
+```
+
+**Приватные helper-методы вместо копипасты внутри класса.**
+
+```kotlin
+// BAD — buildUserInfoLines() продублирован в двух методах
+// GOOD — вынести в private fun buildUserInfoLines(info: UserInformation): List<String>
+```
+
+### Параметры функций
+
+**Больше 4 параметров → data class.**
+
+```kotlin
+// BAD:
+fun updateSessionContext(
+    sessionId: String, systemPrompt: String, model: String,
+    temperature: Float, compressionEnabled: Boolean,
+    compressionN: Int, compressionM: Int,
+    memoryStrategy: String, slidingWindowN: Int, stickyFactsN: Int
+)
+
+// GOOD:
+data class SessionContextConfig(
+    val systemPrompt: String,
+    val model: String,
+    val temperature: Float,
+    val compressionEnabled: Boolean,
+    val compressionN: Int,
+    val compressionM: Int,
+    val memoryStrategy: String,
+    val slidingWindowN: Int,
+    val stickyFactsN: Int
+)
+fun updateSessionContext(sessionId: String, config: SessionContextConfig)
+```
+
+Это же правило распространяется на лямбды `onSave` в Composable — передавай data class, не 9 отдельных параметров.
+
+### Управление Job / корутинами в ViewModel
+
+**Группируй связанные Job в Map, не в отдельные поля.**
+
+```kotlin
+// BAD:
+private var summaryJob: Job? = null
+private var factsJob: Job? = null
+private var branchJob: Job? = null
+private var fsmJob: Job? = null
+// ...
+summaryJob?.cancel(); summaryJob = viewModelScope.launch { ... }
+factsJob?.cancel();   factsJob   = viewModelScope.launch { ... }
+
+// GOOD:
+private val sessionJobs = mutableMapOf<String, Job>()
+// ...
+sessionJobs.values.forEach { it.cancel() }
+sessionJobs.clear()
+sessionJobs["summary"] = viewModelScope.launch { ... }
+sessionJobs["facts"]   = viewModelScope.launch { ... }
+```
+
+### Дублирующая логика с вариацией
+
+**Выноси общий каркас, параметризуй различия.**
+
+```kotlin
+// BAD — checkConstraintViolation и checkResponseViolation имели
+//        идентичный блок «отправь запрос → распарси VIOLATION:»
+
+// GOOD — общий private helper:
+private suspend fun askConstraintsChecker(session: SessionEntity, prompt: String): String?
+
+// Каждый публичный метод только формирует свой prompt и делегирует:
+private suspend fun checkConstraintViolation(...): String? {
+    val prompt = "...user request prompt..."
+    return askConstraintsChecker(session, prompt)
+}
+private suspend fun checkResponseViolation(...): String? {
+    val prompt = "...response check prompt..."
+    return askConstraintsChecker(session, prompt)
+}
+```
+
+### Composable-функции
+
+**Лямбды с >4 параметрами заменяй data class.**
+
+```kotlin
+// BAD:
+onSave: (String, String, Float, Boolean, Int, Int, String, Int, Int) -> Unit
+
+// GOOD:
+onSave: (SessionContextConfig) -> Unit
+```
+
+### Общий принцип
+
+- Одна операция — одно место в коде. Если меняешь логику, меняешь в одном файле.
+- Не выноси в отдельный класс то, что используется только в одном месте.
+- Не создавай абстракции "на будущее" — только под реальную потребность.
 
 ## KMP Migration
 

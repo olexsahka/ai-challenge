@@ -34,6 +34,7 @@ AgentViewModel           LLMAgent
 | `UserProfileRepository` | Stores User Profile (name, occupation, language, response style, format, notes) + toggle and Task Memory (name, description) + toggle in `SharedPreferences`; appended to every request's instructions when the respective toggle is enabled |
 | `ConstraintsRepository` | Stores agent constraints (rules text + enabled toggle) in `SharedPreferences`; enforced on every FSM stage via pre- and post-checks against the LLM |
 | `AppDatabase` | Room database with `sessions`, `messages`, and `summaries` tables |
+| `SessionContextConfig` | Data class grouping all 9 per-session context settings; passed to `updateSessionContext` and `saveSessionContext` instead of individual parameters |
 | `SessionDao` | CRUD for sessions; `observeAll()`, `getLatest()`, `getById()`, `updateContext()` |
 | `MessageDao` | Insert and observe messages by session |
 | `SummaryDao` | Upsert and observe compression summaries by session |
@@ -100,6 +101,18 @@ On every app start the most recent session is restored automatically. The sessio
 ### Message persistence
 
 Every user message is written to the DB **before** the API call. The assistant response is written after a successful response. Both are stored in `MessageEntity` with the session FK, timestamp, and — for assistant messages — token counts, latency, and model.
+
+### Response parsing (`extractText`)
+
+`ChatResponse.extractText()` — extension-функция в `ChatResponse.kt`. Единственное место в коде, где извлекается текст из API-ответа:
+
+```kotlin
+fun ChatResponse.extractText(): String? =
+    output.firstOrNull { it.type == "message" }
+        ?.content?.firstOrNull { it.type == "output_text" }?.text
+```
+
+Используется везде: `LLMAgent`, `ChatRepositoryImpl`, `AgentRunner`. Не дублировать эту цепочку inline.
 
 ### Instructions assembly (`buildInstructions`)
 
@@ -224,7 +237,7 @@ Accessible via the gear icon in the top bar. Stored in the `sessions` table:
 
 | Фаза | Статус |
 |---|---|
-| Фаза 0 — Baseline тесты | ✅ Завершена (157 тестов) |
+| Фаза 0 — Baseline тесты | ✅ Завершена (145 тестов) |
 | Фаза 1 — Domain слой | 🔲 Не начата |
 | Фаза 2 — Platform абстракции | 🔲 Не начата |
 | Фаза 3 — Shared KMP модуль | 🔲 Не начата |
@@ -238,10 +251,10 @@ app/src/test/
 ├── AgentRunnerTest.kt           — ReAct loop, все действия, maxIterations (16 тестов)
 ├── BuildHistoryTest.kt          — все 5 стратегий памяти (12 тестов)
 ├── BuildInstructionsTest.kt     — сборка системного промпта (11 тестов)
-├── SendMessageTest.kt           — полный flow sendMessage + persistence (11 тестов)
+├── SendMessageTest.kt           — sendMessage full flow + persistence (11 тестов)
 ├── BuildBranchHistoryTest.kt    — branching history по ancestor chain (9 тестов)
 ├── AgentMemoryTest.kt           — KV store логика (10 тестов)
-├── UserProfileRepositoryTest.kt — profile/task context строки (11 тестов)
+├── UserProfileRepositoryTest.kt — profile/task context строки (10 тестов)
 ├── TaskFsmRepositoryTest.kt     — FSM state transitions, pause/resume, autoRun, error (24 тестов)
 ├── FsmLLMAgentTest.kt           — FSM интеграция в LLMAgent: ручной/авто режим, обработка ошибок (14 тестов)
 ├── ConstraintsRepositoryTest.kt — ConstraintsRepository: toContextBlock, defaults, enabled/disabled (8 тестов)
