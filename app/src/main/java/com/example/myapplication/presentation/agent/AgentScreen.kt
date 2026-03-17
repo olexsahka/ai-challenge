@@ -133,11 +133,14 @@ fun AgentScreen(modifier: Modifier = Modifier, viewModel: AgentViewModel = koinV
                 constraints = uiState.constraints,
                 vkusVillEnabled = uiState.vkusVillEnabled,
                 mcpStatus = uiState.mcpStatus,
+                telegramEnabled = uiState.telegramEnabled,
+                telegramMcpStatus = uiState.telegramMcpStatus,
                 onSave = { config -> viewModel.saveSessionContext(config) },
                 onSaveUserInformation = { viewModel.saveUserInformation(it) },
                 onSaveTaskMemory = { viewModel.saveTaskMemory(it) },
                 onSaveConstraints = { viewModel.saveConstraints(it) },
                 onToggleVkusVill = { viewModel.toggleVkusVill(it) },
+                onToggleTelegram = { viewModel.toggleTelegram(it) },
                 onForgetMemory = { viewModel.forgetMemory(it) },
                 onForgetAll = { viewModel.forgetAllMemory() },
                 onDismiss = { viewModel.hideSettings() }
@@ -330,11 +333,14 @@ private fun ContextSettingsSheet(
     constraints: Constraints,
     vkusVillEnabled: Boolean,
     mcpStatus: McpConnectionStatus,
+    telegramEnabled: Boolean,
+    telegramMcpStatus: McpConnectionStatus,
     onSave: (SessionContextConfig) -> Unit,
     onSaveUserInformation: (UserInformation) -> Unit,
     onSaveTaskMemory: (TaskMemory) -> Unit,
     onSaveConstraints: (Constraints) -> Unit,
     onToggleVkusVill: (Boolean) -> Unit,
+    onToggleTelegram: (Boolean) -> Unit,
     onForgetMemory: (String) -> Unit,
     onForgetAll: () -> Unit,
     onDismiss: () -> Unit
@@ -665,6 +671,64 @@ private fun ContextSettingsSheet(
                 if (mcpStatus is McpConnectionStatus.Connected && mcpStatus.tools.isNotEmpty()) {
                     Spacer(Modifier.height(8.dp))
                     mcpStatus.tools.forEach { tool ->
+                        Row(
+                            Modifier
+                                .fillMaxWidth()
+                                .padding(vertical = 2.dp),
+                            verticalAlignment = Alignment.Top
+                        ) {
+                            Text(
+                                "• ${tool.name}",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.width(180.dp)
+                            )
+                            Text(
+                                tool.description,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
+                                modifier = Modifier.weight(1f)
+                            )
+                        }
+                    }
+                }
+
+                Spacer(Modifier.height(12.dp))
+                // Telegram MCP
+                Row(
+                    Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Column(Modifier.weight(1f)) {
+                        Text("Telegram", style = MaterialTheme.typography.bodyMedium)
+                        val tgStatusText = when (telegramMcpStatus) {
+                            is McpConnectionStatus.Disconnected -> if (telegramEnabled) "" else "Отключён"
+                            is McpConnectionStatus.Connecting -> "Подключение..."
+                            is McpConnectionStatus.Connected -> "Подключён · ${telegramMcpStatus.tools.size} инструментов"
+                            is McpConnectionStatus.Error -> "Ошибка: ${telegramMcpStatus.message}"
+                        }
+                        val tgStatusColor = when (telegramMcpStatus) {
+                            is McpConnectionStatus.Connected -> MaterialTheme.colorScheme.primary
+                            is McpConnectionStatus.Error -> MaterialTheme.colorScheme.error
+                            else -> MaterialTheme.colorScheme.onSurfaceVariant
+                        }
+                        if (tgStatusText.isNotEmpty()) {
+                            Text(
+                                tgStatusText,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = tgStatusColor
+                            )
+                        }
+                    }
+                    Switch(
+                        checked = telegramEnabled,
+                        onCheckedChange = { onToggleTelegram(it) }
+                    )
+                }
+                if (telegramMcpStatus is McpConnectionStatus.Connected && telegramMcpStatus.tools.isNotEmpty()) {
+                    Spacer(Modifier.height(8.dp))
+                    telegramMcpStatus.tools.forEach { tool ->
                         Row(
                             Modifier
                                 .fillMaxWidth()

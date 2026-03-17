@@ -1,3 +1,5 @@
+import java.util.Properties
+
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.jetbrains.kotlin.android)
@@ -14,6 +16,12 @@ android {
         targetSdk = 35
         versionCode = 1
         versionName = "1.0"
+
+        val localProps = Properties().also { props ->
+            val f = rootProject.file("local.properties")
+            if (f.exists()) props.load(f.inputStream())
+        }
+        buildConfigField("String", "TELEGRAM_MCP_PASSWORD", "\"${localProps.getProperty("TELEGRAM_MCP_PASSWORD", "")}\"")
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {
@@ -39,6 +47,7 @@ android {
     }
     buildFeatures {
         compose = true
+        buildConfig = true
     }
     composeOptions {
         kotlinCompilerExtensionVersion = "1.5.15"

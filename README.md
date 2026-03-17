@@ -264,7 +264,7 @@ Accessible via the gear icon in the top bar. Stored in the `sessions` table:
 
 | Фаза | Статус |
 |---|---|
-| Фаза 0 — Baseline тесты | ✅ Завершена (160 тестов) |
+| Фаза 0 — Baseline тесты | ✅ Завершена (175 тестов) |
 | Фаза 1 — Domain слой | 🔲 Не начата |
 | Фаза 2 — Platform абстракции | 🔲 Не начата |
 | Фаза 3 — Shared KMP модуль | 🔲 Не начата |
@@ -287,6 +287,7 @@ app/src/test/
 ├── FsmLLMAgentTest.kt           — FSM интеграция в LLMAgent: ручной/авто режим, обработка ошибок (14 тестов)
 ├── ConstraintsRepositoryTest.kt — ConstraintsRepository: toContextBlock, defaults, enabled/disabled (8 тестов)
 ├── ConstraintsCheckTest.kt      — pre/post-check нарушений, альтернатива, toInstructionsBlock (13 тестов)
+├── TelegramMcpClientTest.kt     — extractResultText (JSONArray/content/null), stripChatIds, resolveDialogId (15 тестов)
 └── LLMAgentTestBase.kt          — Fake DAO инфраструктура (без тестов)
 ```
 

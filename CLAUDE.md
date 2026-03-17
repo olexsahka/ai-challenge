@@ -109,6 +109,7 @@ Stored globally in SharedPreferences. When enabled, injected into FSM instructio
 
 - **API key hardcoded** in `di/AppModule.kt`. Backend is an OpenAI-compatible proxy at `https://api.proxyapi.ru/openai/v1/`.
 - **MCP server:** `https://mcp001.vkusvill.ru/mcp` — ВкусВилл product search. `vkusVillEnabled` persisted in SharedPreferences (`mcp_prefs`). `AgentRunner` calls `connect()` on every `run()` to refresh tools; existing session reused if server returns same session id.
+- **`TelegramMcpClient`** — MCP client for Telegram bot at `http://178.72.166.221/mcp`. Uses HTTP Basic Auth (`setCredentials`). `extractResultText` handles two result shapes: (1) `result` is a JSONArray (e.g. `get_dialogs` response) — returns array as string; (2) `result` is an object with `content` array (`tools/call` response) — returns the `text` field of the first content item. `stripChatIds` removes `chat_id`/`dialog_id` fields from response objects and populates an internal `dialogIdMap` (title → id) as a side-effect. `resolveDialogId` translates a human-readable dialog name (exact, partial, or "избранное" alias) to a numeric id using that map.
 - **`McpRepository` is `open`** — allows `FakeMcpRepository` subclass in tests without Mockito suspend-function issues.
 - **Room uses destructive migration** — schema changes wipe existing data.
 - **`AgentMemory` (SharedPreferences) is global** — shared across all sessions.
@@ -120,7 +121,7 @@ Stored globally in SharedPreferences. When enabled, injected into FSM instructio
 
 ## Testing
 
-Unit тесты — 160 тестов, 0 failures.
+Unit тесты — 175 тестов, 0 failures.
 
 ```
 app/src/test/java/com/example/myapplication/
@@ -136,6 +137,7 @@ app/src/test/java/com/example/myapplication/
 ├── FsmLLMAgentTest.kt           — FSM интеграция в LLMAgent: ручной/авто режим, обработка ошибок (14 тестов)
 ├── ConstraintsRepositoryTest.kt — ConstraintsRepository: toContextBlock, defaults, enabled/disabled (8 тестов)
 ├── ConstraintsCheckTest.kt      — pre/post-check нарушений, альтернатива, toInstructionsBlock (13 тестов)
+├── TelegramMcpClientTest.kt     — extractResultText (JSONArray/content/null), stripChatIds, resolveDialogId (15 тестов)
 └── LLMAgentTestBase.kt          — Fake DAO инфраструктура (без тестов)
 ```
 

@@ -8,6 +8,7 @@ import com.example.myapplication.agent.LLMAgent
 import com.example.myapplication.agent.MemoryEntry
 import com.example.myapplication.data.mcp.McpConnectionStatus
 import com.example.myapplication.data.mcp.McpRepository
+import com.example.myapplication.data.mcp.TelegramMcpRepository
 import com.example.myapplication.data.repository.Constraints
 import com.example.myapplication.data.repository.ConstraintsRepository
 import com.example.myapplication.data.repository.TaskMemory
@@ -50,7 +51,9 @@ data class AgentUiState(
     val taskFsmState: TaskFsmEntity? = null,
     val constraints: Constraints = Constraints(),
     val vkusVillEnabled: Boolean = false,
-    val mcpStatus: McpConnectionStatus = McpConnectionStatus.Disconnected
+    val mcpStatus: McpConnectionStatus = McpConnectionStatus.Disconnected,
+    val telegramEnabled: Boolean = false,
+    val telegramMcpStatus: McpConnectionStatus = McpConnectionStatus.Disconnected
 )
 
 class AgentViewModel(
@@ -58,7 +61,8 @@ class AgentViewModel(
     private val userProfileRepository: UserProfileRepository,
     private val constraintsRepository: ConstraintsRepository,
     private val mcpRepository: McpRepository,
-    private val agentRunner: AgentRunner
+    private val agentRunner: AgentRunner,
+    private val telegramMcpRepository: TelegramMcpRepository
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(AgentUiState())
@@ -94,9 +98,11 @@ class AgentViewModel(
         refreshProfile()
         refreshConstraints()
         refreshMcpState()
+        refreshTelegramMcpState()
     }
 
     fun newSession() {
+        agentRunner.resetHistory()
         viewModelScope.launch {
             val session = agent.createSession()
             activateSession(session)
@@ -104,6 +110,7 @@ class AgentViewModel(
     }
 
     fun selectSession(session: SessionEntity) {
+        agentRunner.resetHistory()
         activateSession(session)
     }
 
@@ -112,7 +119,7 @@ class AgentViewModel(
         if (text.isBlank() || _uiState.value.isLoading) return
         _uiState.update { it.copy(isLoading = true, error = null) }
         viewModelScope.launch {
-            if (_uiState.value.vkusVillEnabled) {
+            if (_uiState.value.vkusVillEnabled || _uiState.value.telegramEnabled) {
                 val nodeId = _uiState.value.activeNodeId
                 runAgentWithMcp(sessionId, text, nodeId)
             } else {
@@ -329,6 +336,32 @@ class AgentViewModel(
 
     private fun refreshConstraints() {
         _uiState.update { it.copy(constraints = constraintsRepository.constraints) }
+    }
+
+    fun toggleTelegram(enabled: Boolean) {
+        telegramMcpRepository.telegramEnabled = enabled
+        if (enabled) {
+            _uiState.update { it.copy(telegramEnabled = true, telegramMcpStatus = McpConnectionStatus.Connecting) }
+            viewModelScope.launch {
+                val status = telegramMcpRepository.connect()
+                _uiState.update { it.copy(telegramMcpStatus = status) }
+            }
+        } else {
+            telegramMcpRepository.disconnect()
+            _uiState.update { it.copy(telegramEnabled = false, telegramMcpStatus = McpConnectionStatus.Disconnected) }
+        }
+    }
+
+    private fun refreshTelegramMcpState() {
+        val enabled = telegramMcpRepository.telegramEnabled
+        _uiState.update { it.copy(telegramEnabled = enabled) }
+        if (enabled) {
+            _uiState.update { it.copy(telegramMcpStatus = McpConnectionStatus.Connecting) }
+            viewModelScope.launch {
+                val status = telegramMcpRepository.connect()
+                _uiState.update { it.copy(telegramMcpStatus = status) }
+            }
+        }
     }
 
     private fun refreshMcpState() {

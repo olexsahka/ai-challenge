@@ -7,6 +7,8 @@ import com.example.myapplication.agent.TaskFsmRepository
 import com.example.myapplication.data.api.AnthropicApi
 import com.example.myapplication.data.mcp.McpClient
 import com.example.myapplication.data.mcp.McpRepository
+import com.example.myapplication.data.mcp.TelegramMcpClient
+import com.example.myapplication.data.mcp.TelegramMcpRepository
 import com.example.myapplication.data.db.AppDatabase
 import com.example.myapplication.data.repository.ChatRepositoryImpl
 import com.example.myapplication.data.repository.SettingsRepository
@@ -80,8 +82,17 @@ val appModule = module {
     single { LLMAgent(get(), get(), get(), get(), get(), get(), get(), get(), get(), get()) }
     single { McpClient(get()) }
     single { McpRepository(androidContext(), get()) }
-    single { AgentRunner(get(), get(), get()) }
+    single(qualifier = org.koin.core.qualifier.named("plain")) {
+        OkHttpClient.Builder()
+            .connectTimeout(30, TimeUnit.SECONDS)
+            .readTimeout(30, TimeUnit.SECONDS)
+            .writeTimeout(30, TimeUnit.SECONDS)
+            .build()
+    }
+    single { TelegramMcpClient(get(qualifier = org.koin.core.qualifier.named("plain"))) }
+    single { TelegramMcpRepository(androidContext(), get(), com.example.myapplication.BuildConfig.TELEGRAM_MCP_PASSWORD) }
+    single { AgentRunner(get(), get(), get(), get()) }
 
     viewModel { ChatViewModel(get(), get(), get(), get()) }
-    viewModel { AgentViewModel(get(), get(), get(), get(), get()) }
+    viewModel { AgentViewModel(get(), get(), get(), get(), get(), get()) }
 }

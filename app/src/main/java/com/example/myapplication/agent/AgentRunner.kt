@@ -30,6 +30,13 @@ Tool descriptions:
 After each action you will receive an OBSERVATION. Continue until you use FINAL_ANSWER.
 Only output one step at a time.
 When the user asks what you can do, list all available tools with their purpose in the user's language.
+
+Telegram-specific notes (apply when Telegram tools are available):
+- dialog_id in send_message and get_last_messages accepts the dialog TITLE (string) — you do NOT need to look up numeric IDs. Just pass the title you got from get_dialogs or search_dialog.
+- "Избранное" / "Saved Messages" / "себе" / "myself": call get_dialogs first, find the PRIVATE dialog whose title is the account owner name, then use that title as dialog_id.
+- search_dialog does NOT return Saved Messages — always use get_dialogs to find self-chat.
+- Never show numeric chat IDs to the user.
+- Call send_message directly without asking for confirmation — just send the message.
 """.trimIndent()
 
 private fun buildToolDescription(tool: McpTool): String {
@@ -62,18 +69,33 @@ private fun buildSystemPrompt(mcpTools: List<McpTool>): String {
 class AgentRunner(
     private val api: AnthropicApi,
     private val memory: AgentMemory,
-    private val mcpRepository: McpRepository? = null
+    private val mcpRepository: McpRepository? = null,
+    private val telegramMcpRepository: com.example.myapplication.data.mcp.TelegramMcpRepository? = null
 ) {
+    // Persists across run() calls so the agent remembers context when user confirms actions
+    private val conversationHistory = mutableListOf<InputMessage>()
+
+    fun resetHistory() {
+        conversationHistory.clear()
+    }
+
     suspend fun run(
         userTask: String,
         onStep: suspend (AgentStep) -> Unit
     ) {
-        val mcpTools: List<McpTool> = if (mcpRepository != null && mcpRepository.vkusVillEnabled) {
+        val vkusVillTools: List<McpTool> = if (mcpRepository != null && mcpRepository.vkusVillEnabled) {
             val status = mcpRepository.connect()
             if (status is McpConnectionStatus.Connected) status.tools else emptyList()
         } else {
             emptyList()
         }
+        val telegramTools: List<McpTool> = if (telegramMcpRepository != null && telegramMcpRepository.telegramEnabled) {
+            val status = telegramMcpRepository.connect()
+            if (status is McpConnectionStatus.Connected) status.tools else emptyList()
+        } else {
+            emptyList()
+        }
+        val mcpTools = vkusVillTools + telegramTools
 
         val systemPrompt = buildSystemPrompt(mcpTools)
         val memoryContext = memory.toContextString()
@@ -83,7 +105,6 @@ class AgentRunner(
             systemPrompt
         }
 
-        val conversationHistory = mutableListOf<InputMessage>()
         conversationHistory.add(InputMessage(role = "user", content = userTask))
 
         for (iteration in 0 until MAX_ITERATIONS) {
@@ -158,15 +179,20 @@ class AgentRunner(
                 }
             }
             else -> {
-                if (mcpRepository != null && mcpRepository.vkusVillEnabled && mcpRepository.isConnected) {
-                    try {
-                        val args = JSONObject(input.trim())
-                        mcpRepository.callTool(action.trim(), args)
-                    } catch (e: Exception) {
-                        "Error calling MCP tool $action: ${e.message}"
+                // MCP tool names are lowercase; model may output uppercase — normalize
+                val actionName = action.trim().lowercase()
+                val args = try { JSONObject(input.trim()) } catch (e: Exception) { null }
+                when {
+                    args == null -> "Error: invalid JSON input for $actionName"
+                    mcpRepository != null && mcpRepository.vkusVillEnabled && mcpRepository.isConnected -> {
+                        try { mcpRepository.callTool(actionName, args) }
+                        catch (e: Exception) { "Error calling MCP tool $actionName: ${e.message}" }
                     }
-                } else {
-                    "Unknown action: $action"
+                    telegramMcpRepository != null && telegramMcpRepository.telegramEnabled && telegramMcpRepository.isConnected -> {
+                        try { telegramMcpRepository.callTool(actionName, args) }
+                        catch (e: Exception) { "Error calling Telegram MCP tool $actionName: ${e.message}" }
+                    }
+                    else -> "Unknown action: $actionName"
                 }
             }
         }

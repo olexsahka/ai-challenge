@@ -25,7 +25,25 @@
       "Bash(./gradlew :app:compileDebugKotlin 2>&1 | grep -E \"Error|error|unresolved\" | head -20)",
       "Bash(./gradlew :app:compileDebugKotlin 2>&1 | grep -E \"e: |w: \" | head -20)",
       "Bash(./gradlew :app:compileDebugKotlin 2>&1 | grep -E \"e: |BUILD\")",
-      "Bash(cd C:/Users/sutug/AndroidStudioProjects/MyApplication && ./gradlew :app:compileDebugUnitTestKotlin 2>&1 | grep \"e: \" | head -20)"
+      "Bash(cd C:/Users/sutug/AndroidStudioProjects/MyApplication && ./gradlew :app:compileDebugUnitTestKotlin 2>&1 | grep \"e: \" | head -20)",
+      "WebFetch(domain:api.github.com)",
+      "WebFetch(domain:raw.githubusercontent.com)",
+      "Bash(gh api:*)",
+      "Bash(./gradlew :app:compileDebugKotlin 2>&1 | tail -40)",
+      "Bash(curl:*)",
+      "Bash(./gradlew :app:compileDebugKotlin 2>&1 | tail -15)",
+      "Bash(./gradlew :app:compileDebugKotlin 2>&1 | tail -5)",
+      "Bash(adb devices:*)",
+      "Bash($ANDROID_HOME/platform-tools/adb.exe devices:*)",
+      "Bash(\\\\\n  ./gradlew installDebug 2>&1 | tail -5)",
+      "Bash(\"/c/Users/sutug/AppData/Local/Android/Sdk/platform-tools/adb\" logcat:*)",
+      "Bash(./gradlew :app:installDebug 2>&1 | tail -5)",
+      "Bash(./gradlew :app:assembleDebug 2>&1 | grep -i \"error\\\\|Error\" | head -20)",
+      "Bash(./gradlew :app:compileDebugKotlin 2>&1 | grep -E \"\\\\.kt:[0-9]+\" | head -20)",
+      "Bash(./gradlew :app:installDebug 2>&1 | tail -3)",
+      "Bash(./gradlew assembleDebug 2>&1 | tail -20)",
+      "Bash(./gradlew installDebug 2>&1 | tail -10)",
+      "Bash(python3:*)"
     ]
   },
   "spinnerTipsEnabled": false
