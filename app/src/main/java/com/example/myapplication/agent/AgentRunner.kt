@@ -5,7 +5,7 @@ import com.example.myapplication.data.api.model.ChatRequest
 import com.example.myapplication.data.api.model.InputMessage
 import com.example.myapplication.data.api.model.extractText
 import com.example.myapplication.data.mcp.McpConnectionStatus
-import com.example.myapplication.data.mcp.McpRepository
+import com.example.myapplication.data.mcp.McpProviderFacade
 import com.example.myapplication.data.mcp.McpTool
 import org.json.JSONObject
 
@@ -69,11 +69,12 @@ private fun buildSystemPrompt(mcpTools: List<McpTool>): String {
 class AgentRunner(
     private val api: AnthropicApi,
     private val memory: AgentMemory,
-    private val mcpRepository: McpRepository? = null,
-    private val telegramMcpRepository: com.example.myapplication.data.mcp.TelegramMcpRepository? = null
+    private vararg val mcpProviders: McpProviderFacade
 ) {
     // Persists across run() calls so the agent remembers context when user confirms actions
     private val conversationHistory = mutableListOf<InputMessage>()
+    // Maps tool name → provider that owns it, built fresh on each run()
+    private val toolToProvider = mutableMapOf<String, McpProviderFacade>()
 
     fun resetHistory() {
         conversationHistory.clear()
@@ -83,19 +84,18 @@ class AgentRunner(
         userTask: String,
         onStep: suspend (AgentStep) -> Unit
     ) {
-        val vkusVillTools: List<McpTool> = if (mcpRepository != null && mcpRepository.vkusVillEnabled) {
-            val status = mcpRepository.connect()
-            if (status is McpConnectionStatus.Connected) status.tools else emptyList()
-        } else {
-            emptyList()
+        toolToProvider.clear()
+        val mcpTools = mutableListOf<McpTool>()
+        for (provider in mcpProviders) {
+            if (!provider.isEnabled) continue
+            val status = provider.connect()
+            if (status is McpConnectionStatus.Connected) {
+                for (tool in status.tools) {
+                    toolToProvider[tool.name] = provider
+                }
+                mcpTools += status.tools
+            }
         }
-        val telegramTools: List<McpTool> = if (telegramMcpRepository != null && telegramMcpRepository.telegramEnabled) {
-            val status = telegramMcpRepository.connect()
-            if (status is McpConnectionStatus.Connected) status.tools else emptyList()
-        } else {
-            emptyList()
-        }
-        val mcpTools = vkusVillTools + telegramTools
 
         val systemPrompt = buildSystemPrompt(mcpTools)
         val memoryContext = memory.toContextString()
@@ -182,17 +182,16 @@ class AgentRunner(
                 // MCP tool names are lowercase; model may output uppercase — normalize
                 val actionName = action.trim().lowercase()
                 val args = try { JSONObject(input.trim()) } catch (e: Exception) { null }
-                when {
-                    args == null -> "Error: invalid JSON input for $actionName"
-                    mcpRepository != null && mcpRepository.vkusVillEnabled && mcpRepository.isConnected -> {
-                        try { mcpRepository.callTool(actionName, args) }
+                if (args == null) {
+                    "Error: invalid JSON input for $actionName"
+                } else {
+                    val provider = toolToProvider[actionName]
+                    if (provider != null) {
+                        try { provider.callTool(actionName, args) }
                         catch (e: Exception) { "Error calling MCP tool $actionName: ${e.message}" }
+                    } else {
+                        "Unknown action: $actionName"
                     }
-                    telegramMcpRepository != null && telegramMcpRepository.telegramEnabled && telegramMcpRepository.isConnected -> {
-                        try { telegramMcpRepository.callTool(actionName, args) }
-                        catch (e: Exception) { "Error calling Telegram MCP tool $actionName: ${e.message}" }
-                    }
-                    else -> "Unknown action: $actionName"
                 }
             }
         }

@@ -39,9 +39,12 @@ AgentViewModel           LLMAgent
 | `MessageDao` | Insert and observe messages by session |
 | `SummaryDao` | Upsert and observe compression summaries by session |
 | `AnthropicApi` | Retrofit interface; `POST /responses` and `GET /models` endpoints |
-| `AgentRunner` | Standalone ReAct-loop agent (max 6 iterations); integrates MCP tools dynamically into the system prompt; executed via `AgentViewModel.runAgentWithMcp` when ВкусВилл is enabled |
-| `McpClient` | Raw HTTP client for the MCP protocol (JSON-RPC over HTTP); handles `initialize → notifications/initialized → tools/list → tools/call` handshake |
-| `McpRepository` | Thin wrapper around `McpClient`; persists `vkusVillEnabled` in SharedPreferences; proxies `connect()`, `callTool()`, `disconnect()` |
+| `AgentRunner` | Standalone ReAct-loop agent (max 6 iterations); integrates MCP tools from any enabled `McpProviderFacade`; routes tool calls via `toolToProvider` map; executed via `AgentViewModel.runAgentWithMcp` |
+| `McpProviderFacade` | Unified interface for all MCP providers (`isEnabled`, `connect()`, `callTool()`, `disconnect()`); implemented by `McpRepository` and `TelegramMcpRepository` |
+| `McpClient` | Raw HTTP client for ВкусВилл MCP (JSON-RPC); handles full `initialize → notifications/initialized → tools/list → tools/call` handshake with `Mcp-Session-Id` |
+| `McpRepository` | Thin wrapper around `McpClient`; persists `vkusVillEnabled` in SharedPreferences; implements `McpProviderFacade` |
+| `TelegramMcpClient` | Stateless HTTP Basic Auth MCP client for local Telegram server (`http://10.0.2.2:8080/mcp`); no initialize handshake; `dialog_id` resolution via internal `dialogIdMap` |
+| `TelegramMcpRepository` | Thin wrapper around `TelegramMcpClient`; persists `telegramEnabled`; implements `McpProviderFacade` |
 
 ### Component interactions
 
@@ -148,29 +151,34 @@ Stored in the `summaries` table with:
 
 When compression is enabled and a summary exists for the active session, a pinned banner appears above the message list showing the first sentence of the summary. Tapping it opens a dialog with the full summary text. The banner updates reactively via `observeSummary` → `StateFlow`.
 
-### MCP Integration (ВкусВилл)
+### MCP Integration
 
-When the ВкусВилл toggle is enabled in context settings, all messages are routed through `AgentRunner` instead of `LLMAgent.sendMessage`.
+When any MCP toggle is enabled, messages are routed through `AgentRunner` instead of `LLMAgent.sendMessage`. Multiple providers can be active simultaneously.
 
-**Connection flow (on toggle or app start):**
-1. `McpClient` sends `initialize` → receives `Mcp-Session-Id` header
-2. Sends `notifications/initialized` with the session ID
-3. Sends `tools/list` → receives available tools (name, description, JSON Schema)
+**ВкусВилл (product search, `https://mcp001.vkusvill.ru/mcp`):**
+1. Full handshake: `initialize` → receives `Mcp-Session-Id` → `notifications/initialized` → `tools/list`
+2. Session ID sent on all subsequent requests
+
+**Telegram (local server, `http://10.0.2.2:8080/mcp`):**
+1. No initialize handshake — stateless HTTP POST with HTTP Basic Auth
+2. Directly calls `tools/list`, then `tools/call`
+3. Tools: `get_dialogs`, `search_dialog`, `get_unread_messages`, `get_last_messages`, `send_message`
+4. `dialog_id` accepts Long; `TelegramMcpClient` resolves string titles to numeric IDs automatically via `dialogIdMap`
 
 **Per-message flow:**
-1. `AgentRunner.run()` calls `mcpRepository.connect()` to get the current tool list
-2. `buildSystemPrompt(tools)` injects tool names and field descriptions into the system prompt
-3. The ReAct loop parses `THOUGHT / ACTION / INPUT` from the model response
-4. If `ACTION` matches a known MCP tool name, `mcpRepository.callTool(name, JSONObject(input))` is called
-5. The tool result is appended as `OBSERVATION` and the loop continues
-6. If the model responds without the ReAct format (plain text), the whole response is treated as `FINAL_ANSWER`
-7. On `FINAL_ANSWER`, the answer is saved via `agent.saveAssistantMessage(sessionId, content, nodeId)`
+1. `AgentRunner.run()` calls `connect()` on each enabled provider → builds `toolToProvider: Map<String, McpProviderFacade>`
+2. `buildSystemPrompt(tools)` injects all tool names and field descriptions into the system prompt
+3. The ReAct loop parses `THOUGHT / ACTION / INPUT` from model response
+4. Action name lowercased → looked up in `toolToProvider` → dispatched to the owning provider
+5. Tool result appended as `OBSERVATION`, loop continues
+6. Plain text response (no ReAct format) → treated as `FINAL_ANSWER`
+7. On `FINAL_ANSWER`, saved via `agent.saveAssistantMessage(sessionId, content, nodeId)`
 
 **UI:**
-- Context settings bottom sheet → "MCP Servers" section with ВкусВилл toggle
-- Connection status: Подключение... / Подключён · N инструментов / Ошибка: ...
-- Expandable tool list under the toggle when connected
-- Clickable links in assistant messages (markdown `[label](url)` and bare URLs) open the browser
+- Context settings bottom sheet → "MCP Servers" section with ВкусВилл and Telegram toggles
+- Connection status per server: Подключение... / Подключён · N инструментов / Ошибка: ...
+- Expandable tool list under each toggle when connected
+- Clickable links in assistant messages open the browser
 
 ### Memory store
 
@@ -264,7 +272,7 @@ Accessible via the gear icon in the top bar. Stored in the `sessions` table:
 
 | Фаза | Статус |
 |---|---|
-| Фаза 0 — Baseline тесты | ✅ Завершена (175 тестов) |
+| Фаза 0 — Baseline тесты + MCP рефакторинг | ✅ Завершена (175 тестов; Kotlin 2.1.0; McpProviderFacade) |
 | Фаза 1 — Domain слой | 🔲 Не начата |
 | Фаза 2 — Platform абстракции | 🔲 Не начата |
 | Фаза 3 — Shared KMP модуль | 🔲 Не начата |
@@ -297,17 +305,19 @@ app/src/test/
 
 | Category | Technology |
 |---|---|
-| Language | Kotlin |
+| Language | Kotlin 2.1.0 |
 | UI | Jetpack Compose (Material 3) |
 | Architecture | MVVM + Clean Architecture (domain / data / presentation) |
 | Dependency injection | Koin |
-| Networking | Retrofit 2 + OkHttp 3 |
-| JSON serialization | Gson |
+| Networking | Retrofit 2 + OkHttp 3 (main API); Ktor 3.2.3 (MCP SDK) |
+| JSON serialization | Gson (API) + `org.json` (MCP) |
 | Async | Kotlin Coroutines + `StateFlow` |
 | Local persistence | Room (sessions + messages + summaries) |
 | Memory store | `SharedPreferences` |
 | API backend | OpenAI-compatible proxy (`api.proxyapi.ru`) |
-| MCP | JSON-RPC over HTTP (`mcp001.vkusvill.ru/mcp`); OkHttp directly (not Retrofit) |
+| MCP — ВкусВилл | JSON-RPC + full handshake (`mcp001.vkusvill.ru/mcp`); OkHttp |
+| MCP — Telegram | Stateless JSON-RPC, Basic Auth (`10.0.2.2:8080/mcp`); OkHttp |
+| MCP SDK | `io.modelcontextprotocol:kotlin-sdk-client:0.9.0` (добавлен, готов к использованию) |
 
 ---
 

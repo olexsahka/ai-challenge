@@ -11,7 +11,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 # Build and install on connected device
 ./gradlew installDebug
 
-# Run all unit tests (160 тестов, 0 failures)
+# Run all unit tests (175 тестов, 0 failures)
 ./gradlew :app:testDebugUnitTest
 
 # Run instrumented tests (requires connected device/emulator)
@@ -37,7 +37,7 @@ presentation/  →  agent/  →  data/
 | `presentation/chat/` | `ChatScreen`, `ChatViewModel` — legacy/alternative chat UI |
 | `agent/` | `LLMAgent` (core request logic), `AgentMemory` (SharedPreferences KV store), `AgentRunner` (ReAct loop agent), `TaskFsmRepository` (FSM state machine) |
 | `data/api/` | `AnthropicApi` (Retrofit interface to OpenAI-compatible proxy) |
-| `data/mcp/` | `McpClient` (OkHttp JSON-RPC client for MCP protocol), `McpRepository` (SharedPreferences toggle + proxy to McpClient) |
+| `data/mcp/` | `McpClient` (OkHttp JSON-RPC + handshake for ВкусВилл), `McpRepository` (SharedPreferences toggle + proxy), `TelegramMcpClient` (stateless HTTP Basic Auth, no handshake), `TelegramMcpRepository`, `McpProviderFacade` (unified interface) |
 | `data/db/` | Room database: DAOs + entities for sessions, messages, summaries, facts, branch nodes, task_fsm |
 | `data/repository/UserProfileRepository.kt` | SharedPreferences store for User Profile (name, occupation, language, response style, format, notes) and Task Memory; `toContextString()` appends them to API instructions when enabled |
 | `data/repository/ConstraintsRepository.kt` | SharedPreferences store for agent constraints (`rules: String`, `enabled: Boolean`); enforced on every FSM stage via pre- and post-checks |
@@ -60,21 +60,45 @@ Each session uses one of five strategies, selected per-session in context settin
 
 ### `AgentRunner` (ReAct loop)
 
-Standalone ReAct-style agent (max 6 iterations) used independently from `LLMAgent`. Tools: `SEARCH_MEMORY`, `STORE_MEMORY`, `CALCULATE`, `FINAL_ANSWER`, + dynamic MCP tools when ВкусВилл enabled. Parses `THOUGHT/ACTION/INPUT` lines from model output.
+Standalone ReAct-style agent (max 6 iterations) used independently from `LLMAgent`. Tools: `SEARCH_MEMORY`, `STORE_MEMORY`, `CALCULATE`, `FINAL_ANSWER`, + dynamic MCP tools from any enabled provider. Parses `THOUGHT/ACTION/INPUT` lines from model output.
+
+**Constructor:** `AgentRunner(api, memory, vararg mcpProviders: McpProviderFacade)` — accepts any number of MCP providers.
+
+**Routing:** on each `run()`, builds `toolToProvider: Map<String, McpProviderFacade>` by calling `connect()` on every enabled provider. Tool calls are dispatched via this map — no if/else chain.
 
 **Key behaviours:**
 - If model responds without ReAct format (plain text) → entire response treated as `FINAL_ANSWER`
 - MCP tools added to system prompt dynamically at start of each `run()` call via `connect()`
 - MCP action input must be valid JSON; invalid JSON returns error OBSERVATION without calling `callTool`
+- Model action names lowercased before routing — handles `SEND_MESSAGE` → `send_message`
 - Messages saved via `agent.saveUserMessage(sessionId, text, nodeId)` and `saveAssistantMessage(...)` with `branchNodeId` to support all memory strategies
 
-### MCP (`McpClient` + `McpRepository`)
+### MCP architecture
 
-MCP protocol over HTTP (JSON-RPC). Server: `https://mcp001.vkusvill.ru/mcp`.
+**`McpProviderFacade`** — unified interface implemented by both repositories:
+```kotlin
+interface McpProviderFacade {
+    val isEnabled: Boolean
+    val isConnected: Boolean
+    suspend fun connect(): McpConnectionStatus
+    fun disconnect()
+    suspend fun callTool(toolName: String, arguments: JSONObject): String
+}
+```
 
-**Handshake:** `initialize` → `notifications/initialized` → `tools/list`. Session ID returned in `Mcp-Session-Id` header, sent on all subsequent requests.
+**ВкусВилл (`McpClient` + `McpRepository`)** — server: `https://mcp001.vkusvill.ru/mcp`.
+- Full handshake: `initialize` → `notifications/initialized` → `tools/list`
+- Session ID returned in `Mcp-Session-Id` header, sent on all subsequent requests
+- `McpRepository` is `open` — subclassable for testing (`FakeMcpRepository` pattern)
 
-**`McpRepository` is `open`** — subclassable for testing (no mocking of suspend functions needed; use `FakeMcpRepository` pattern).
+**Telegram (`TelegramMcpClient` + `TelegramMcpRepository`)** — local server: `http://10.0.2.2:8080/mcp` (emulator) / host `localhost:8080`.
+- **No initialize handshake** — stateless HTTP POST, connects directly with `tools/list`
+- **No session ID** — auth via HTTP Basic (`mcp` / `MCP_PASSWORD`)
+- Source: [olexsahka/MCPTelegramServer](https://github.com/olexsahka/MCPTelegramServer)
+- `extractResultText` handles two result shapes: (1) `result` is JSONArray → returns as string; (2) `result` is object with `content` array → returns `text` of first item
+- `stripChatIds` (internal) — removes `chat_id`/`dialog_id` from response, populates `dialogIdMap` (title→id) as side-effect
+- `resolveDialogId` (internal) — translates human-readable title to numeric Long id (exact, partial, "избранное" alias)
+- Network: cleartext traffic for `10.0.2.2` permitted in `network_security_config.xml`
 
 **Test dependency:** `org.json:json:20240303` added to `testImplementation` so unit tests can construct real `JSONObject` instances without Android runtime.
 
@@ -108,8 +132,10 @@ Stored globally in SharedPreferences. When enabled, injected into FSM instructio
 ## Key Constraints
 
 - **API key hardcoded** in `di/AppModule.kt`. Backend is an OpenAI-compatible proxy at `https://api.proxyapi.ru/openai/v1/`.
-- **MCP server:** `https://mcp001.vkusvill.ru/mcp` — ВкусВилл product search. `vkusVillEnabled` persisted in SharedPreferences (`mcp_prefs`). `AgentRunner` calls `connect()` on every `run()` to refresh tools; existing session reused if server returns same session id.
-- **`TelegramMcpClient`** — MCP client for Telegram bot at `http://178.72.166.221/mcp`. Uses HTTP Basic Auth (`setCredentials`). `extractResultText` handles two result shapes: (1) `result` is a JSONArray (e.g. `get_dialogs` response) — returns array as string; (2) `result` is an object with `content` array (`tools/call` response) — returns the `text` field of the first content item. `stripChatIds` removes `chat_id`/`dialog_id` fields from response objects and populates an internal `dialogIdMap` (title → id) as a side-effect. `resolveDialogId` translates a human-readable dialog name (exact, partial, or "избранное" alias) to a numeric id using that map.
+- **MCP SDK:** `io.modelcontextprotocol:kotlin-sdk-client:0.9.0` + Ktor 3.2.3 added as dependencies (server artifacts excluded). Kotlin upgraded to 2.1.0, KSP 2.1.0-1.0.29 to match.
+- **ВкусВилл MCP:** `https://mcp001.vkusvill.ru/mcp` — product search. Full initialize handshake + session ID header. `vkusVillEnabled` persisted in SharedPreferences (`mcp_prefs`).
+- **Telegram MCP:** `http://10.0.2.2:8080/mcp` — local server (emulator). No initialize handshake, stateless HTTP POST, Basic Auth. Password from `local.properties` → `BuildConfig.TELEGRAM_MCP_PASSWORD`. `telegramEnabled` persisted in SharedPreferences (`telegram_mcp_prefs`).
+- **`McpProviderFacade`** — interface implemented by both `McpRepository` and `TelegramMcpRepository`. `AgentRunner` takes `vararg McpProviderFacade` and routes tool calls via `toolToProvider` map built at `run()` start.
 - **`McpRepository` is `open`** — allows `FakeMcpRepository` subclass in tests without Mockito suspend-function issues.
 - **Room uses destructive migration** — schema changes wipe existing data.
 - **`AgentMemory` (SharedPreferences) is global** — shared across all sessions.
@@ -118,6 +144,7 @@ Stored globally in SharedPreferences. When enabled, injected into FSM instructio
 - `STICKY_FACTS` and `COMPRESSION` strategies make an extra API call synchronously within `sendMessage`, adding latency.
 - Session title is auto-set from the first sentence of the first assistant response.
 - **`jvmTarget = "11"`** — повышен с 1.8 для совместимости с mockito-kotlin тестами.
+- **Kotlin 2.1.0** — upgraded from 1.9.25; uses `org.jetbrains.kotlin.plugin.compose` and `org.jetbrains.kotlin.plugin.serialization` plugins.
 
 ## Testing
 
@@ -143,7 +170,7 @@ app/src/test/java/com/example/myapplication/
 
 **Тестовая инфраструктура:** вместо реальных DAO используются `FakeSessionDao`, `FakeMessageDao`, `FakeSummaryDao`, `FakeFactDao`, `FakeBranchNodeDao` (in-memory, без Room/Android). `AgentMemory` и `UserProfileRepository` мокируются через Mockito (изолируют `Context`/`SharedPreferences`).
 
-**Для тестов MCP:** `McpRepository` объявлен `open` — создавай `FakeMcpRepository : McpRepository(null, null)` и переопределяй `connect()`, `callTool()`, `isConnected`, `vkusVillEnabled`. Не используй Mockito для suspend-функций `McpRepository` — это ненадёжно без `coWhenever` (недоступен в mockito-kotlin 5.2.1).
+**Для тестов MCP:** `McpRepository` объявлен `open` — создавай `FakeMcpRepository : McpRepository(null, null)` и переопределяй `connect()`, `callTool()`, `isConnected`, `vkusVillEnabled`. Не используй Mockito для suspend-функций `McpRepository` — это ненадёжно без `coWhenever` (недоступен в mockito-kotlin 5.2.1). `TelegramMcpClientTest` использует методы `internal` напрямую (без reflection).
 
 **Важно для будущих тестов:** `CapturingAnthropicApi.lastRequest` перезаписывается на каждый API вызов. Для стратегий с двумя вызовами (STICKY_FACTS, COMPRESSION) использовать `SequentialAnthropicApi.requests.first()` чтобы получить именно главный запрос.
 
@@ -271,4 +298,4 @@ onSave: (SessionContextConfig) -> Unit
 
 Проект в процессе подготовки к Kotlin Multiplatform. План: [`KMP_MIGRATION_PLAN.md`](KMP_MIGRATION_PLAN.md).
 
-**Текущий статус:** Фаза 0 завершена. Следующий шаг — Фаза 1 (выделение domain слоя, введение интерфейсов репозиториев).
+**Текущий статус:** Фаза 0 завершена (175 тестов). Kotlin обновлён до 2.1.0, MCP SDK добавлен, `McpProviderFacade` введён. Следующий шаг — Фаза 1 (выделение domain слоя, введение интерфейсов репозиториев).

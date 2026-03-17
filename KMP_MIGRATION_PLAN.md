@@ -62,7 +62,7 @@ jsMain                 — localStorage, Ktor-JS engine, actual-реализац
 | `domain/repository/` интерфейсы | 🆕 Создать | 1 |
 | `domain/usecase/` | ✅ Почти готов | 3 |
 | `agent/AgentStep` | ✅ Pure Kotlin, готов | 3 |
-| `agent/AgentRunner` | ✅ Нет Android-импортов | 3 |
+| `agent/AgentRunner` | ✅ Нет Android-импортов; принимает `vararg McpProviderFacade`, маршрутизирует через `toolToProvider` map | 3 |
 | `agent/LLMAgent` | ⚠️ `SimpleDateFormat`, `UUID`, `System` | 3 (после фаз 1–2) |
 | `data/api/model/` DTO | ⚠️ Нужна замена Gson → kotlinx.serialization | 4 |
 | `platform/` интерфейсы | 🆕 Создать | 2 |
@@ -73,7 +73,7 @@ jsMain                 — localStorage, Ktor-JS engine, actual-реализац
 
 | Фаза | Статус |
 |---|---|
-| Фаза 0 — Baseline тесты | ✅ Завершена (145 тестов, 0 failures) |
+| Фаза 0 — Baseline тесты + MCP рефакторинг | ✅ Завершена (175 тестов, 0 failures) |
 | Фаза 1 — Domain слой | 🔲 Не начата |
 | Фаза 2 — Platform абстракции | 🔲 Не начата |
 | Фаза 3 — Shared KMP модуль | 🔲 Не начата |
@@ -82,13 +82,13 @@ jsMain                 — localStorage, Ktor-JS engine, actual-реализац
 
 ---
 
-## Фаза 0 — Baseline тесты ✅ ЗАВЕРШЕНА
+## Фаза 0 — Baseline тесты + MCP рефакторинг ✅ ЗАВЕРШЕНА
 
 > **Цель:** зафиксировать текущее поведение тестами до начала любых рефакторингов. Тесты становятся safety net — если что-то сломается в фазах 1–5, тесты сразу покажут это.
 
 > **Почему важно делать первым:** без тестов невозможно безопасно рефакторить. Тесты написаны против текущего кода, а не против будущего — они описывают реальное поведение, а не желаемое.
 
-**Результат: 145 тестов, 0 failures, 0 errors. Baseline зафиксирован.**
+**Результат: 175 тестов, 0 failures, 0 errors. Baseline зафиксирован.**
 
 ### Написанные тестовые файлы
 
@@ -122,7 +122,13 @@ jsMain                 — localStorage, Ktor-JS engine, actual-реализац
 - [x] **0.6** Тесты `buildBranchHistory` — `BuildBranchHistoryTest.kt`
 - [x] **0.7** Integration тест `sendMessage` с FakeApi + FakeDAO — `SendMessageTest.kt`
 - [x] **0.8** Все 86 тестов проходят — **baseline зафиксирован**
-- [x] **0.9** Расширение baseline: FSM, Constraints, Branching тесты — итого **145 тестов**
+- [x] **0.9** Расширение baseline: FSM, Constraints, Branching, Telegram MCP тесты — итого **175 тестов**
+- [x] **0.10** Kotlin 1.9.25 → 2.1.0; KSP 2.1.0-1.0.29; добавлены плагины `kotlin.plugin.compose`, `kotlin.plugin.serialization`
+- [x] **0.11** Добавлены зависимости: `io.modelcontextprotocol:kotlin-sdk-client:0.9.0`, Ktor 3.2.3 (server artifacts excluded)
+- [x] **0.12** Введён `McpProviderFacade` интерфейс; `McpRepository` и `TelegramMcpRepository` реализуют его
+- [x] **0.13** `AgentRunner` переведён на `vararg McpProviderFacade` + `toolToProvider` map; убран if/else роутинг
+- [x] **0.14** `TelegramMcpClient` обновлён: URL → `http://10.0.2.2:8080/mcp`, убран initialize handshake, методы `internal` (без reflection в тестах)
+- [x] **0.15** `network_security_config.xml` — добавлен cleartext для `10.0.2.2`
 
 ---
 
@@ -330,7 +336,7 @@ single { LLMAgent(get(), get(), get(), get(), get(), get(), get()) }
 - [ ] **1.4** Переписать `LLMAgent` — убрать все DAO и Entity, работать только через интерфейсы
 - [ ] **1.5** Обновить `AppModule.kt` — внедрять репозитории вместо DAO
 - [ ] **1.6** Обновить `LLMAgentTestBase.kt` под новые интерфейсы
-- [ ] **1.7** `./gradlew :app:testDebugUnitTest` — все 145 тестов проходят
+- [ ] **1.7** `./gradlew :app:testDebugUnitTest` — все 175 тестов проходят
 
 ---
 
@@ -560,7 +566,7 @@ val memory = AgentMemory(storage)
 - [ ] **2.5** Создать `LLMApiClient` интерфейс, переключить `LLMAgent` на него
 - [ ] **2.6** Обновить `AppModule.kt`
 - [ ] **2.7** Обновить тесты: убрать Mockito-моки `AgentMemory`, использовать `FakeKeyValueStorage`
-- [ ] **2.8** `./gradlew :app:testDebugUnitTest` — все 145 тестов проходят
+- [ ] **2.8** `./gradlew :app:testDebugUnitTest` — все 175 тестов проходят
 - [ ] **2.9** `./gradlew :app:assembleDebug` — приложение собирается и работает
 
 ---
@@ -601,8 +607,8 @@ include(":app", ":shared")
 
 ```kotlin
 plugins {
-    kotlin("multiplatform") version "1.9.25"
-    kotlin("plugin.serialization") version "1.9.25"
+    kotlin("multiplatform") version "2.1.0"
+    kotlin("plugin.serialization") version "2.1.0"
     id("com.android.library")
 }
 
@@ -620,15 +626,15 @@ kotlin {
             implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.7.3")
             implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.7.1")
             implementation("org.jetbrains.kotlinx:kotlinx-datetime:0.6.1")
-            implementation("io.ktor:ktor-client-core:2.3.12")
-            implementation("io.ktor:ktor-client-content-negotiation:2.3.12")
-            implementation("io.ktor:ktor-serialization-kotlinx-json:2.3.12")
+            implementation("io.ktor:ktor-client-core:3.2.3")
+            implementation("io.ktor:ktor-client-content-negotiation:3.2.3")
+            implementation("io.ktor:ktor-serialization-kotlinx-json:3.2.3")
         }
         androidMain.dependencies {
-            implementation("io.ktor:ktor-client-okhttp:2.3.12")
+            implementation("io.ktor:ktor-client-okhttp:3.2.3")
         }
         jsMain.dependencies {
-            implementation("io.ktor:ktor-client-js:2.3.12")
+            implementation("io.ktor:ktor-client-js:3.2.3")
         }
         commonTest.dependencies {
             implementation(kotlin("test"))

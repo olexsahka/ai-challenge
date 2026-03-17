@@ -82,7 +82,8 @@ class AgentRunnerMcpTest {
     ): Pair<List<AgentStep>, FakeAnthropicApi> {
         val api = FakeAnthropicApi(responses)
         val steps = mutableListOf<AgentStep>()
-        AgentRunner(api, memory, mcpRepo).run("test task") { steps.add(it) }
+        val runner = if (mcpRepo != null) AgentRunner(api, memory, mcpRepo) else AgentRunner(api, memory)
+        runner.run("test task") { steps.add(it) }
         return steps to api
     }
 

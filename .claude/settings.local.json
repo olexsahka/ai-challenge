@@ -43,7 +43,10 @@
       "Bash(./gradlew :app:installDebug 2>&1 | tail -3)",
       "Bash(./gradlew assembleDebug 2>&1 | tail -20)",
       "Bash(./gradlew installDebug 2>&1 | tail -10)",
-      "Bash(python3:*)"
+      "Bash(python3:*)",
+      "WebFetch(domain:central.sonatype.com)",
+      "WebFetch(domain:ktor.io)",
+      "Bash(cd:*)"
     ]
   },
   "spinnerTipsEnabled": false

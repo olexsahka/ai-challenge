@@ -9,14 +9,14 @@ import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONObject
 
-private const val TELEGRAM_MCP_URL = "http://178.72.166.221/mcp"
+private const val TELEGRAM_MCP_URL = "http://10.0.2.2:8080/mcp"
 
 class TelegramMcpClient(private val httpClient: OkHttpClient) {
 
     private val json = "application/json".toMediaType()
     private var basicAuthHeader: String? = null
     // title -> chat_id mapping, populated from get_dialogs / search_dialog responses
-    private val dialogIdMap = mutableMapOf<String, Long>()
+    internal val dialogIdMap = mutableMapOf<String, Long>()
 
     val isConnected: Boolean get() = basicAuthHeader != null
 
@@ -100,7 +100,7 @@ class TelegramMcpClient(private val httpClient: OkHttpClient) {
     // Extract text content from MCP JSON-RPC result envelope
     // tools/call result = {"content": [{"type":"text","text":"..."}], "isError": false}
     // tools/list or direct array result = [...]
-    private fun extractResultText(root: JSONObject): String? {
+    internal fun extractResultText(root: JSONObject): String? {
         // Case 1: result is an object with "content" array (tools/call)
         val resultObj = root.optJSONObject("result")
         if (resultObj != null) {
@@ -137,7 +137,6 @@ class TelegramMcpClient(private val httpClient: OkHttpClient) {
             val response = httpClient.newCall(request).execute()
             val text = response.body?.string() ?: ""
             response.close()
-            // parse and populate dialogIdMap — reuse stripChatIds side-effect
             val result = JSONObject(text)
             val raw = extractResultText(result) ?: return
             stripChatIds(raw) // populates dialogIdMap as side effect
@@ -145,7 +144,7 @@ class TelegramMcpClient(private val httpClient: OkHttpClient) {
     }
 
     // Strip chat_id from response but save the mapping title->id for later use
-    private fun stripChatIds(raw: String): String {
+    internal fun stripChatIds(raw: String): String {
         return try {
             val arr = org.json.JSONArray(raw)
             val result = org.json.JSONArray()
@@ -183,7 +182,7 @@ class TelegramMcpClient(private val httpClient: OkHttpClient) {
     }
 
     // Resolve numeric dialog_id from map if the value looks like a name
-    private fun resolveDialogId(arguments: JSONObject): JSONObject {
+    internal fun resolveDialogId(arguments: JSONObject): JSONObject {
         val raw = arguments.opt("dialog_id") ?: return arguments
         if (raw is Number) return arguments
         if (raw is String && raw.toLongOrNull() != null) return arguments
@@ -198,7 +197,6 @@ class TelegramMcpClient(private val httpClient: OkHttpClient) {
             }?.value
             // Saved Messages aliases → pick first PRIVATE dialog (self-chat)
             ?: if (query.contains("избранн") || query.contains("saved") || query.contains("себ") || query.contains("myself")) {
-                // self-chat is stored under the owner's name; pick any PRIVATE we know
                 dialogIdMap.values.firstOrNull()
             } else null
 

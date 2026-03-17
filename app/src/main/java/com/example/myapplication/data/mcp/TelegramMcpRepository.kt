@@ -11,23 +11,25 @@ open class TelegramMcpRepository(
     context: Context?,
     private val client: TelegramMcpClient?,
     private val password: String
-) {
+) : McpProviderFacade {
     private val prefs: SharedPreferences? = context?.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
 
     open var telegramEnabled: Boolean
         get() = prefs?.getBoolean(KEY_ENABLED, false) ?: false
         set(value) { prefs?.edit()?.putBoolean(KEY_ENABLED, value)?.apply() }
 
-    open val isConnected: Boolean get() = client?.isConnected ?: false
+    override val isEnabled: Boolean get() = telegramEnabled
 
-    open suspend fun connect(): McpConnectionStatus {
+    override val isConnected: Boolean get() = client?.isConnected ?: false
+
+    override suspend fun connect(): McpConnectionStatus {
         val c = client ?: return McpConnectionStatus.Error("Client not initialized")
         c.setCredentials(USERNAME, password)
         return c.connect()
     }
 
-    open fun disconnect() = client?.disconnect()
+    override fun disconnect() = client?.disconnect() ?: Unit
 
-    open suspend fun callTool(toolName: String, arguments: org.json.JSONObject): String =
+    override suspend fun callTool(toolName: String, arguments: org.json.JSONObject): String =
         client?.callTool(toolName, arguments) ?: "Error: client not initialized"
 }

@@ -91,7 +91,7 @@ val appModule = module {
     }
     single { TelegramMcpClient(get(qualifier = org.koin.core.qualifier.named("plain"))) }
     single { TelegramMcpRepository(androidContext(), get(), com.example.myapplication.BuildConfig.TELEGRAM_MCP_PASSWORD) }
-    single { AgentRunner(get(), get(), get(), get()) }
+    single { AgentRunner(get(), get(), get<McpRepository>(), get<TelegramMcpRepository>()) }
 
     viewModel { ChatViewModel(get(), get(), get(), get()) }
     viewModel { AgentViewModel(get(), get(), get(), get(), get(), get()) }

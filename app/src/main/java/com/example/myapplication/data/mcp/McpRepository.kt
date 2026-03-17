@@ -9,19 +9,21 @@ private const val KEY_VKUSVILL_ENABLED = "vkusvill_enabled"
 open class McpRepository(
     context: Context?,
     private val mcpClient: McpClient?
-) {
+) : McpProviderFacade {
     private val prefs: SharedPreferences? = context?.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
 
     open var vkusVillEnabled: Boolean
         get() = prefs?.getBoolean(KEY_VKUSVILL_ENABLED, false) ?: false
         set(value) { prefs?.edit()?.putBoolean(KEY_VKUSVILL_ENABLED, value)?.apply() }
 
-    open suspend fun connect(): McpConnectionStatus = mcpClient!!.connect()
+    override val isEnabled: Boolean get() = vkusVillEnabled
 
-    open fun disconnect() = mcpClient!!.disconnect()
+    override suspend fun connect(): McpConnectionStatus = mcpClient!!.connect()
 
-    open val isConnected: Boolean get() = mcpClient?.isConnected ?: false
+    override fun disconnect() = mcpClient!!.disconnect()
 
-    open suspend fun callTool(toolName: String, arguments: org.json.JSONObject): String =
+    override val isConnected: Boolean get() = mcpClient?.isConnected ?: false
+
+    override suspend fun callTool(toolName: String, arguments: org.json.JSONObject): String =
         mcpClient!!.callTool(toolName, arguments)
 }
