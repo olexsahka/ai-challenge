@@ -9,19 +9,6 @@ import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONArray
 import org.json.JSONObject
 
-data class McpTool(
-    val name: String,
-    val description: String,
-    val inputSchema: JSONObject
-)
-
-sealed class McpConnectionStatus {
-    object Disconnected : McpConnectionStatus()
-    object Connecting : McpConnectionStatus()
-    data class Connected(val tools: List<McpTool>) : McpConnectionStatus()
-    data class Error(val message: String) : McpConnectionStatus()
-}
-
 class McpClient(private val httpClient: OkHttpClient) {
 
     private val baseUrl = "https://mcp001.vkusvill.ru/mcp"
@@ -155,7 +142,7 @@ class McpClient(private val httpClient: OkHttpClient) {
                 McpTool(
                     name = t.getString("name"),
                     description = t.optString("description", ""),
-                    inputSchema = t.optJSONObject("inputSchema") ?: JSONObject()
+                    inputSchemaJson = (t.optJSONObject("inputSchema") ?: JSONObject()).toString()
                 )
             }
         } catch (e: Exception) {

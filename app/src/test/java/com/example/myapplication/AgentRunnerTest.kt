@@ -4,7 +4,7 @@ import com.example.myapplication.agent.AgentMemory
 import com.example.myapplication.agent.AgentRunner
 import com.example.myapplication.agent.AgentStep
 import com.example.myapplication.agent.AgentStepType
-import com.example.myapplication.data.api.AnthropicApi
+import com.example.myapplication.domain.api.LLMApiClient
 import com.example.myapplication.data.api.model.ChatRequest
 import com.example.myapplication.data.api.model.ChatResponse
 import com.example.myapplication.data.api.model.ModelsResponse
@@ -32,12 +32,9 @@ class AgentRunnerTest {
     // ---------------------------------------------------------------------------
 
     private fun makeMemory(entries: Map<String, String> = emptyMap()): AgentMemory {
-        val memory = mock<AgentMemory>()
-        whenever(memory.toContextString()).thenReturn("")
-        whenever(memory.recall(org.mockito.kotlin.any())).thenAnswer { invocation ->
-            entries[invocation.getArgument(0) as String]
-        }
-        return memory
+        val storage = FakeKeyValueStorage()
+        entries.forEach { (k, v) -> storage.putString(k, v) }
+        return AgentMemory(storage)
     }
 
     private fun makeRunner(
@@ -123,8 +120,8 @@ class AgentRunnerTest {
 
     @Test
     fun `STORE_MEMORY calls memory store with correct key and value`() = runTest {
-        val memory = mock<AgentMemory>()
-        whenever(memory.toContextString()).thenReturn("")
+        val storage = FakeKeyValueStorage()
+        val memory = AgentMemory(storage)
         val (runner, steps) = makeRunner(
             listOf(
                 agentResponse(action = "STORE_MEMORY", input = "user_name=Bob"),
@@ -134,7 +131,7 @@ class AgentRunnerTest {
         )
         runner.run("Remember Bob") { steps.add(it) }
 
-        org.mockito.kotlin.verify(memory).store("user_name", "Bob")
+        assertEquals("Bob", storage.getString("user_name"))
     }
 
     @Test
@@ -342,7 +339,7 @@ fun assistantResponse(text: String, inputTokens: Int = 10, outputTokens: Int = 2
         usage = UsageInfo(inputTokens, outputTokens)
     )
 
-class FakeAnthropicApi(private val responses: List<ChatResponse>) : AnthropicApi {
+class FakeAnthropicApi(private val responses: List<ChatResponse>)  : LLMApiClient {
     private var callCount = 0
     val capturedRequests = mutableListOf<ChatRequest>()
 
@@ -354,7 +351,7 @@ class FakeAnthropicApi(private val responses: List<ChatResponse>) : AnthropicApi
     override suspend fun getModels() = ModelsResponse(`object` = "list", data = emptyList())
 }
 
-class ThrowingAnthropicApi(private val ex: Exception) : AnthropicApi {
+class ThrowingAnthropicApi(private val ex: Exception)  : LLMApiClient {
     override suspend fun sendMessage(request: ChatRequest): ChatResponse = throw ex
     override suspend fun getModels() = ModelsResponse(`object` = "list", data = emptyList())
 }

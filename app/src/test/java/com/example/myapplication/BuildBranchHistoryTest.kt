@@ -1,8 +1,8 @@
 package com.example.myapplication
 
 import com.example.myapplication.agent.LLMAgent
-import com.example.myapplication.data.db.entity.BranchNodeEntity
 import com.example.myapplication.data.db.entity.MemoryStrategy
+import com.example.myapplication.domain.model.BranchNode
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.*
 import org.junit.Before
@@ -17,38 +17,41 @@ import org.junit.Test
  */
 class BuildBranchHistoryTest {
 
-    private lateinit var sessionDao: FakeSessionDao
-    private lateinit var messageDao: FakeMessageDao
-    private lateinit var summaryDao: FakeSummaryDao
-    private lateinit var factDao: FakeFactDao
-    private lateinit var branchNodeDao: FakeBranchNodeDao
+    private lateinit var sessionRepo: FakeSessionRepository
+    private lateinit var messageRepo: FakeMessageRepository
+    private lateinit var summaryRepo: FakeSummaryRepository
+    private lateinit var factRepo: FakeFactRepository
+    private lateinit var branchNodeRepo: FakeBranchNodeRepository
     private lateinit var api: CapturingAnthropicApi
 
     @Before
     fun setup() {
-        sessionDao = FakeSessionDao()
-        messageDao = FakeMessageDao()
-        summaryDao = FakeSummaryDao()
-        factDao = FakeFactDao()
-        branchNodeDao = FakeBranchNodeDao()
+        sessionRepo = FakeSessionRepository()
+        messageRepo = FakeMessageRepository()
+        summaryRepo = FakeSummaryRepository()
+        factRepo = FakeFactRepository()
+        branchNodeRepo = FakeBranchNodeRepository()
         api = CapturingAnthropicApi(simpleResponse("Branch response"))
     }
 
     private fun makeAgent() = LLMAgent(
         api = api,
-        sessionDao = sessionDao,
-        messageDao = messageDao,
+        sessionRepo = sessionRepo,
+        messageRepo = messageRepo,
         memory = makeMockMemory(),
-        summaryDao = summaryDao,
-        factDao = factDao,
-        branchNodeDao = branchNodeDao,
+        summaryRepo = summaryRepo,
+        factRepo = factRepo,
+        branchNodeRepo = branchNodeRepo,
         userProfileRepository = makeMockUserProfile(),
         taskFsmRepository = makeMockTaskFsmRepository(),
-        constraintsRepository = makeMockConstraintsRepository()
+        constraintsRepository = makeMockConstraintsRepository(),
+        clock = FakeClock(),
+        uuidGenerator = FakeUuidGenerator(),
+        dateFormatter = FakeDateFormatter()
     )
 
     private fun branchNode(id: String, sessionId: String, parentId: String? = null, label: String = "Node") =
-        BranchNodeEntity(
+        BranchNode(
             id = id,
             sessionId = sessionId,
             parentId = parentId,
@@ -63,12 +66,12 @@ class BuildBranchHistoryTest {
     @Test
     fun `single root node sends only its own messages`() = runTest {
         val session = sessionOf(strategy = MemoryStrategy.BRANCHING)
-        sessionDao.sessions[session.id] = session
+        sessionRepo.sessions[session.id] = session
 
         val root = branchNode("root-1", session.id)
-        branchNodeDao.nodes.add(root)
-        messageDao.messages.add(makeUserMessage(1, session.id, "root-1"))
-        messageDao.messages.add(makeAssistantMessage(1, session.id, "root-1"))
+        branchNodeRepo.nodes.add(root)
+        messageRepo.messages.add(makeUserMessage(1, session.id, "root-1"))
+        messageRepo.messages.add(makeAssistantMessage(1, session.id, "root-1"))
 
         makeAgent().sendMessageToNode(session.id, "root-1", "new message in root")
 
@@ -87,18 +90,18 @@ class BuildBranchHistoryTest {
     @Test
     fun `child node includes root messages then child messages`() = runTest {
         val session = sessionOf(strategy = MemoryStrategy.BRANCHING)
-        sessionDao.sessions[session.id] = session
+        sessionRepo.sessions[session.id] = session
 
         val root = branchNode("root-1", session.id)
         val child = branchNode("child-1", session.id, parentId = "root-1")
-        branchNodeDao.nodes.addAll(listOf(root, child))
+        branchNodeRepo.nodes.addAll(listOf(root, child))
 
         // Root messages
-        messageDao.messages.add(makeUserMessage(1, session.id, "root-1"))
-        messageDao.messages.add(makeAssistantMessage(1, session.id, "root-1"))
+        messageRepo.messages.add(makeUserMessage(1, session.id, "root-1"))
+        messageRepo.messages.add(makeAssistantMessage(1, session.id, "root-1"))
         // Child messages
-        messageDao.messages.add(makeUserMessage(2, session.id, "child-1"))
-        messageDao.messages.add(makeAssistantMessage(2, session.id, "child-1"))
+        messageRepo.messages.add(makeUserMessage(2, session.id, "child-1"))
+        messageRepo.messages.add(makeAssistantMessage(2, session.id, "child-1"))
 
         makeAgent().sendMessageToNode(session.id, "child-1", "new in child")
 
@@ -120,16 +123,16 @@ class BuildBranchHistoryTest {
     @Test
     fun `chain of 3 nodes concatenates messages root first grandchild last`() = runTest {
         val session = sessionOf(strategy = MemoryStrategy.BRANCHING)
-        sessionDao.sessions[session.id] = session
+        sessionRepo.sessions[session.id] = session
 
         val root = branchNode("n-root", session.id)
         val child = branchNode("n-child", session.id, parentId = "n-root")
         val grandchild = branchNode("n-grand", session.id, parentId = "n-child")
-        branchNodeDao.nodes.addAll(listOf(root, child, grandchild))
+        branchNodeRepo.nodes.addAll(listOf(root, child, grandchild))
 
-        messageDao.messages.add(makeUserMessage(1, session.id, "n-root"))
-        messageDao.messages.add(makeUserMessage(2, session.id, "n-child"))
-        messageDao.messages.add(makeUserMessage(3, session.id, "n-grand"))
+        messageRepo.messages.add(makeUserMessage(1, session.id, "n-root"))
+        messageRepo.messages.add(makeUserMessage(2, session.id, "n-child"))
+        messageRepo.messages.add(makeUserMessage(3, session.id, "n-grand"))
 
         makeAgent().sendMessageToNode(session.id, "n-grand", "new")
 
@@ -149,35 +152,35 @@ class BuildBranchHistoryTest {
     @Test
     fun `sendMessageToNode persists user message with correct branchNodeId`() = runTest {
         val session = sessionOf()
-        sessionDao.sessions[session.id] = session
+        sessionRepo.sessions[session.id] = session
         val node = branchNode("node-42", session.id)
-        branchNodeDao.nodes.add(node)
+        branchNodeRepo.nodes.add(node)
 
         makeAgent().sendMessageToNode(session.id, "node-42", "branch question")
 
-        val userMsg = messageDao.messages.first { it.isFromUser && it.branchNodeId == "node-42" }
+        val userMsg = messageRepo.messages.first { it.isFromUser && it.branchNodeId == "node-42" }
         assertEquals("branch question", userMsg.content)
     }
 
     @Test
     fun `sendMessageToNode persists assistant message with correct branchNodeId`() = runTest {
         val session = sessionOf()
-        sessionDao.sessions[session.id] = session
+        sessionRepo.sessions[session.id] = session
         val node = branchNode("node-42", session.id)
-        branchNodeDao.nodes.add(node)
+        branchNodeRepo.nodes.add(node)
 
         makeAgent().sendMessageToNode(session.id, "node-42", "hello")
 
-        val assistantMsg = messageDao.messages.first { !it.isFromUser && it.branchNodeId == "node-42" }
+        val assistantMsg = messageRepo.messages.first { !it.isFromUser && it.branchNodeId == "node-42" }
         assertEquals("Branch response", assistantMsg.content)
     }
 
     @Test
     fun `sendMessageToNode returns success Result`() = runTest {
         val session = sessionOf()
-        sessionDao.sessions[session.id] = session
+        sessionRepo.sessions[session.id] = session
         val node = branchNode("node-1", session.id)
-        branchNodeDao.nodes.add(node)
+        branchNodeRepo.nodes.add(node)
 
         val result = makeAgent().sendMessageToNode(session.id, "node-1", "hello")
 
@@ -187,7 +190,7 @@ class BuildBranchHistoryTest {
     @Test
     fun `sendMessageToNode returns failure when session not found`() = runTest {
         val node = branchNode("node-1", "nonexistent-session")
-        branchNodeDao.nodes.add(node)
+        branchNodeRepo.nodes.add(node)
 
         val result = makeAgent().sendMessageToNode("nonexistent-session", "node-1", "hello")
 
@@ -201,13 +204,13 @@ class BuildBranchHistoryTest {
     @Test
     fun `first message to node auto-sets node label from user text`() = runTest {
         val session = sessionOf()
-        sessionDao.sessions[session.id] = session
+        sessionRepo.sessions[session.id] = session
         val node = branchNode("node-1", session.id, label = "Branch 1")
-        branchNodeDao.nodes.add(node)
+        branchNodeRepo.nodes.add(node)
 
         makeAgent().sendMessageToNode(session.id, "node-1", "What is the capital of France?")
 
-        val updatedNode = branchNodeDao.nodes.first { it.id == "node-1" }
+        val updatedNode = branchNodeRepo.nodes.first { it.id == "node-1" }
         assertTrue(
             "Expected node label to be updated from user text, got: ${updatedNode.label}",
             updatedNode.label != "Branch 1"
@@ -218,15 +221,15 @@ class BuildBranchHistoryTest {
     @Test
     fun `second message to node does not change node label`() = runTest {
         val session = sessionOf()
-        sessionDao.sessions[session.id] = session
+        sessionRepo.sessions[session.id] = session
         val node = branchNode("node-1", session.id, label = "My Branch")
-        branchNodeDao.nodes.add(node)
+        branchNodeRepo.nodes.add(node)
         // Pre-populate with one message to make it not the first
-        messageDao.messages.add(makeUserMessage(1, session.id, "node-1"))
+        messageRepo.messages.add(makeUserMessage(1, session.id, "node-1"))
 
         makeAgent().sendMessageToNode(session.id, "node-1", "follow-up question")
 
-        val updatedNode = branchNodeDao.nodes.first { it.id == "node-1" }
+        val updatedNode = branchNodeRepo.nodes.first { it.id == "node-1" }
         assertEquals("My Branch", updatedNode.label)
     }
 }

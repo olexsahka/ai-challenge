@@ -7,22 +7,19 @@ import org.junit.Test
 import org.junit.Assert.*
 
 /**
- * Tests for AgentMemory using a fake KeyValueStorage.
+ * Tests for AgentMemory using FakeKeyValueStorage.
  * Фаза 0 — baseline тесты (пункт 0.4).
- *
- * AgentMemory напрямую использует SharedPreferences, поэтому тестируем через
- * FakeKeyValueStorage — промежуточный шаг перед выделением интерфейса в Фазе 2.
+ * После Фазы 2 AgentMemory принимает KeyValueStorage — тесты используют FakeKeyValueStorage напрямую.
  */
 class AgentMemoryTest {
 
-    // Простая in-memory реализация, которая повторяет контракт SharedPreferences
-    private lateinit var fakePrefs: FakeSharedPreferences
-    private lateinit var memory: TestableAgentMemory
+    private lateinit var storage: FakeKeyValueStorage
+    private lateinit var memory: AgentMemory
 
     @Before
     fun setup() {
-        fakePrefs = FakeSharedPreferences()
-        memory = TestableAgentMemory(fakePrefs)
+        storage = FakeKeyValueStorage()
+        memory = AgentMemory(storage)
     }
 
     // --- store / recall ---
@@ -122,43 +119,5 @@ class AgentMemoryTest {
         memory.store("key", "val")
         memory.forgetAll()
         assertTrue(memory.toContextString().isBlank())
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Test infrastructure: fake SharedPreferences + testable AgentMemory subclass
-// ---------------------------------------------------------------------------
-
-class FakeSharedPreferences {
-    val data = mutableMapOf<String, String>()
-
-    fun getString(key: String): String? = data[key]
-    fun putString(key: String, value: String) { data[key] = value }
-    fun remove(key: String) { data.remove(key) }
-    fun clear() { data.clear() }
-    fun getAll(): Map<String, String> = data.toMap()
-}
-
-/**
- * Подкласс AgentMemory который принимает FakeSharedPreferences вместо Context.
- * Это временный паттерн до выделения KeyValueStorage интерфейса в Фазе 2.
- */
-class TestableAgentMemory(private val prefs: FakeSharedPreferences) {
-
-    fun store(key: String, value: String) = prefs.putString(key, value)
-
-    fun recall(key: String): String? = prefs.getString(key)
-
-    fun recallAll(): List<MemoryEntry> =
-        prefs.getAll().map { (k, v) -> MemoryEntry(key = k, value = v) }
-
-    fun forget(key: String) = prefs.remove(key)
-
-    fun forgetAll() = prefs.clear()
-
-    fun toContextString(): String {
-        val all = recallAll()
-        if (all.isEmpty()) return ""
-        return "Stored memories:\n" + all.joinToString("\n") { "- ${it.key}: ${it.value}" }
     }
 }

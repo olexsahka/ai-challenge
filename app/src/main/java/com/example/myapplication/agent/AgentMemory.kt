@@ -1,35 +1,31 @@
 package com.example.myapplication.agent
 
-import android.content.Context
-import androidx.core.content.edit
+import com.example.myapplication.platform.KeyValueStorage
 
 data class MemoryEntry(
     val key: String,
     val value: String,
-    val createdAt: Long = System.currentTimeMillis()
+    val createdAt: Long = 0L
 )
 
-class AgentMemory(context: Context) {
-    private val prefs = context.getSharedPreferences("agent_memory", Context.MODE_PRIVATE)
+class AgentMemory(private val storage: KeyValueStorage) {
 
     fun store(key: String, value: String) {
-        prefs.edit { putString(key, value) }
+        storage.putString(key, value)
     }
 
-    fun recall(key: String): String? = prefs.getString(key, null)
+    fun recall(key: String): String? = storage.getString(key)
 
     fun recallAll(): List<MemoryEntry> {
-        return prefs.all.map { (k, v) ->
-            MemoryEntry(key = k, value = v.toString())
-        }
+        return storage.getAll().map { (k, v) -> MemoryEntry(key = k, value = v) }
     }
 
     fun forget(key: String) {
-        prefs.edit { remove(key) }
+        storage.remove(key)
     }
 
     fun forgetAll() {
-        prefs.edit { clear() }
+        storage.clear()
     }
 
     fun toContextString(): String {

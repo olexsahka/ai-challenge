@@ -354,8 +354,9 @@ private fun MessageBubble(message: Message, usdToRub: Double) {
                     modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)
                 )
             }
-            if (!message.isFromUser && message.meta != null) {
-                MessageMetaRow(meta = message.meta, usdToRub = usdToRub)
+            val meta = message.meta
+            if (!message.isFromUser && meta != null) {
+                MessageMetaRow(meta = meta, usdToRub = usdToRub)
             }
             IconButton(
                 onClick = {

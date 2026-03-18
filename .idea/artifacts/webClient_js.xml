@@ -1,0 +1,8 @@
+<component name="ArtifactManager">
+  <artifact type="jar" name="webClient-js">
+    <output-path>$PROJECT_DIR$/webClient/build/libs</output-path>
+    <root id="archive" name="webClient-js.jar">
+      <element id="module-output" name="my-application.webClient.jsMain" />
+    </root>
+  </artifact>
+</component>

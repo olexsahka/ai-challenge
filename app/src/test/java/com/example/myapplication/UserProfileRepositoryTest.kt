@@ -2,6 +2,7 @@ package com.example.myapplication
 
 import com.example.myapplication.data.repository.TaskMemory
 import com.example.myapplication.data.repository.UserInformation
+import com.example.myapplication.data.repository.UserProfileRepository
 import org.junit.Before
 import org.junit.Test
 import org.junit.Assert.*
@@ -9,17 +10,15 @@ import org.junit.Assert.*
 /**
  * Tests for UserProfileRepository.toContextString() logic.
  * Фаза 0 — baseline тесты (пункт 0.5).
- *
- * UserProfileRepository зависит от Context/SharedPreferences, поэтому
- * тестируем через TestableUserProfileRepository с FakeSharedPreferences.
+ * После Фазы 2 UserProfileRepository принимает KeyValueStorage — тесты используют FakeKeyValueStorage.
  */
 class UserProfileRepositoryTest {
 
-    private lateinit var repo: TestableUserProfileRepository
+    private lateinit var repo: UserProfileRepository
 
     @Before
     fun setup() {
-        repo = TestableUserProfileRepository()
+        repo = UserProfileRepository(FakeKeyValueStorage())
     }
 
     // --- empty state ---
@@ -139,41 +138,5 @@ class UserProfileRepositoryTest {
         val infoIdx = result.indexOf("User information:")
         val taskIdx = result.indexOf("Current task:")
         assertTrue(infoIdx < taskIdx)
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Test infrastructure
-// ---------------------------------------------------------------------------
-
-class TestableUserProfileRepository {
-
-    var userInformation: UserInformation = UserInformation()
-    var taskMemory: TaskMemory = TaskMemory()
-
-    fun toContextString(): String {
-        val parts = mutableListOf<String>()
-
-        val info = userInformation
-        val infoLines = mutableListOf<String>()
-        if (info.name.isNotBlank()) infoLines.add("Name: ${info.name.trim()}")
-        if (info.occupation.isNotBlank()) infoLines.add("Occupation: ${info.occupation.trim()}")
-        if (info.language.isNotBlank()) infoLines.add("Language: ${info.language.trim()}")
-        if (info.responseStyle.isNotBlank()) infoLines.add("Response style: ${info.responseStyle.trim()}")
-        if (info.responseFormat.isNotBlank()) infoLines.add("Response format: ${info.responseFormat.trim()}")
-        if (info.additionalNotes.isNotBlank()) infoLines.add("Notes: ${info.additionalNotes.trim()}")
-        if (infoLines.isNotEmpty()) {
-            parts.add("User information:\n${infoLines.joinToString("\n")}")
-        }
-
-        val task = taskMemory
-        if (task.enabled && (task.name.isNotBlank() || task.description.isNotBlank())) {
-            val sb = StringBuilder("Current task:")
-            if (task.name.isNotBlank()) sb.append("\nName: ${task.name.trim()}")
-            if (task.description.isNotBlank()) sb.append("\nDescription: ${task.description.trim()}")
-            parts.add(sb.toString())
-        }
-
-        return parts.joinToString("\n\n")
     }
 }

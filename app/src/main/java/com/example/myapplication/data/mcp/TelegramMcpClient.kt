@@ -215,7 +215,7 @@ class TelegramMcpClient(private val httpClient: OkHttpClient) {
                 McpTool(
                     name = t.getString("name"),
                     description = t.optString("description", ""),
-                    inputSchema = t.optJSONObject("inputSchema") ?: JSONObject()
+                    inputSchemaJson = (t.optJSONObject("inputSchema") ?: JSONObject()).toString()
                 )
             }
         } catch (e: Exception) {

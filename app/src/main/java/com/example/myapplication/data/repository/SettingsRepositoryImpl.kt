@@ -3,20 +3,20 @@ package com.example.myapplication.data.repository
 import android.content.Context
 import com.example.myapplication.domain.model.RestrictionProfile
 import com.example.myapplication.domain.model.Settings
-import com.google.gson.Gson
-import com.google.gson.reflect.TypeToken
+import kotlinx.serialization.encodeToString
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.builtins.ListSerializer
 
 class SettingsRepositoryImpl(context: Context) : SettingsRepository {
 
     private val prefs = context.getSharedPreferences("settings", Context.MODE_PRIVATE)
-    private val gson = Gson()
+    private val json = Json { ignoreUnknownKeys = true }
 
     override fun getSettings(): Settings {
-        val json = prefs.getString(KEY_PROFILES, null)
-        val profiles = if (json != null) {
+        val jsonStr = prefs.getString(KEY_PROFILES, null)
+        val profiles = if (jsonStr != null) {
             try {
-                val type = object : TypeToken<List<RestrictionProfile>>() {}.type
-                gson.fromJson<List<RestrictionProfile>>(json, type)
+                json.decodeFromString(ListSerializer(RestrictionProfile.serializer()), jsonStr)
             } catch (_: Exception) {
                 emptyList()
             }
@@ -28,7 +28,7 @@ class SettingsRepositoryImpl(context: Context) : SettingsRepository {
 
     override fun saveSettings(settings: Settings) {
         prefs.edit()
-            .putString(KEY_PROFILES, gson.toJson(settings.profiles))
+            .putString(KEY_PROFILES, json.encodeToString(ListSerializer(RestrictionProfile.serializer()), settings.profiles))
             .apply()
     }
 

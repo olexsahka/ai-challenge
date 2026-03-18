@@ -38,7 +38,7 @@ class AgentRunnerMcpTest {
         private val toolError: Exception? = null
     ) : McpRepository(null, null) {
 
-        val toolCalls = mutableListOf<Pair<String, JSONObject>>()
+        val toolCalls = mutableListOf<Pair<String, String>>()
         var connectCalled = false
 
         override suspend fun connect(): McpConnectionStatus {
@@ -49,8 +49,8 @@ class AgentRunnerMcpTest {
         override val isConnected: Boolean
             get() = connectStatus is McpConnectionStatus.Connected
 
-        override suspend fun callTool(toolName: String, arguments: JSONObject): String {
-            toolCalls.add(toolName to arguments)
+        override suspend fun callTool(toolName: String, argumentsJson: String): String {
+            toolCalls.add(toolName to argumentsJson)
             if (toolError != null) throw toolError
             return toolResult
         }
@@ -66,7 +66,7 @@ class AgentRunnerMcpTest {
         name: String,
         description: String = "A tool",
         schemaJson: String = """{"type":"object","properties":{"q":{"type":"string"}}}"""
-    ) = McpTool(name, description, JSONObject(schemaJson))
+    ) = McpTool(name, description, schemaJson)
 
     private fun makeMemory(): AgentMemory {
         val m = mock<AgentMemory>()
@@ -259,7 +259,7 @@ class AgentRunnerMcpTest {
         )
 
         assertEquals(1, repo.toolCalls.size)
-        val args = repo.toolCalls[0].second
+        val args = JSONObject(repo.toolCalls[0].second)
         assertEquals("хлеб", args.getString("q"))
         assertEquals(2, args.getInt("page"))
     }

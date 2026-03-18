@@ -83,13 +83,13 @@ import com.example.myapplication.agent.MemoryEntry
 import com.example.myapplication.data.repository.Constraints
 import com.example.myapplication.data.repository.TaskMemory
 import com.example.myapplication.data.repository.UserInformation
-import com.example.myapplication.data.db.entity.BranchNodeEntity
-import com.example.myapplication.data.db.entity.FactEntity
+import com.example.myapplication.domain.model.BranchNode
+import com.example.myapplication.domain.model.FactData
 import com.example.myapplication.data.db.entity.MemoryStrategy
-import com.example.myapplication.data.db.entity.SessionContextConfig
-import com.example.myapplication.data.db.entity.SessionEntity
-import com.example.myapplication.data.db.entity.TaskFsmEntity
-import com.example.myapplication.data.db.entity.TaskStage
+import com.example.myapplication.domain.model.SessionContextConfig
+import com.example.myapplication.domain.model.Session
+import com.example.myapplication.domain.model.TaskFsmState
+import com.example.myapplication.domain.model.TaskStage
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material3.RadioButton
@@ -250,7 +250,7 @@ fun AgentScreen(modifier: Modifier = Modifier, viewModel: AgentViewModel = koinV
                     }
                     val hasMessages = messages.isNotEmpty()
                     val fsmStage = uiState.taskFsmState?.stage
-                    if (hasMessages || fsmStage == com.example.myapplication.data.db.entity.TaskStage.ERROR.name) {
+                    if (hasMessages || fsmStage == TaskStage.ERROR) {
                         uiState.taskFsmState?.let { fsm ->
                             FsmStatusBanner(
                                 fsm = fsm,
@@ -274,8 +274,8 @@ fun AgentScreen(modifier: Modifier = Modifier, viewModel: AgentViewModel = koinV
                     }
                     // Show "Run All" button when task memory enabled, not loading, not autoRun, not DONE
                     val fsm = uiState.taskFsmState
-                    val fsmDone = fsm?.stage == com.example.myapplication.data.db.entity.TaskStage.DONE.name
-                    val fsmError = fsm?.stage == com.example.myapplication.data.db.entity.TaskStage.ERROR.name
+                    val fsmDone = fsm?.stage == TaskStage.DONE
+                    val fsmError = fsm?.stage == TaskStage.ERROR
                     val fsmWaiting = fsm != null && !fsm.autoRun && !fsmDone && !fsmError
                     // FSM not started or in ERROR: show button only when user has typed something
                     val fsmNotStarted = (fsm == null || fsmError) && inputText.isNotBlank()
@@ -326,7 +326,7 @@ fun AgentScreen(modifier: Modifier = Modifier, viewModel: AgentViewModel = koinV
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun ContextSettingsSheet(
-    session: SessionEntity,
+    session: Session,
     memories: List<MemoryEntry>,
     userInformation: UserInformation,
     taskMemory: TaskMemory,
@@ -826,9 +826,9 @@ private fun ContextSettingsSheet(
 
 @Composable
 private fun SessionSidebar(
-    sessions: List<SessionEntity>,
+    sessions: List<Session>,
     activeSessionId: String?,
-    onSelect: (SessionEntity) -> Unit,
+    onSelect: (Session) -> Unit,
     modifier: Modifier = Modifier
 ) {
     val fmt = remember { SimpleDateFormat("dd MMM\nHH:mm", Locale.getDefault()) }
@@ -867,12 +867,12 @@ private fun SessionSidebar(
 
 @Composable
 private fun BranchSidebar(
-    sessions: List<SessionEntity>,
+    sessions: List<Session>,
     activeSessionId: String?,
-    onSelectSession: (SessionEntity) -> Unit,
-    nodes: List<BranchNodeEntity>,
+    onSelectSession: (Session) -> Unit,
+    nodes: List<BranchNode>,
     activeNodeId: String?,
-    onSelectNode: (BranchNodeEntity) -> Unit,
+    onSelectNode: (BranchNode) -> Unit,
     onForkNode: () -> Unit,
     onRenameNode: (String, String) -> Unit,
     modifier: Modifier = Modifier
@@ -1030,24 +1030,23 @@ private fun stageColor(header: String): Color? = when {
 
 @Composable
 private fun FsmStatusBanner(
-    fsm: TaskFsmEntity,
+    fsm: TaskFsmState,
     isLoading: Boolean,
     onRunAll: () -> Unit,
     onStop: () -> Unit,
     onReset: () -> Unit
 ) {
-    val stage = runCatching { TaskStage.valueOf(fsm.stage) }.getOrNull()
+    val stage = fsm.stage
     val stageLabel = when (stage) {
         TaskStage.PLANNING -> "📋 Планирование"
         TaskStage.EXECUTION -> "⚙️ Выполнение"
         TaskStage.VALIDATION -> "✅ Валидация"
         TaskStage.DONE -> "🏁 Готово"
         TaskStage.ERROR -> "❌ Ошибка"
-        null -> fsm.stage
     }
     val stepInfo = when {
         stage == TaskStage.EXECUTION && fsm.stepCount > 0 -> "шаг ${fsm.step}/${fsm.stepCount}"
-        stage != TaskStage.DONE && stage != null -> "шаг ${fsm.step}"
+        stage != TaskStage.DONE -> "шаг ${fsm.step}"
         else -> null
     }
     val progress = when (stage) {
@@ -1056,7 +1055,6 @@ private fun FsmStatusBanner(
         TaskStage.VALIDATION -> 0.85f
         TaskStage.DONE -> 1.0f
         TaskStage.ERROR -> 0f
-        null -> 0f
     }
     val bannerColor = when (stage) {
         TaskStage.PLANNING -> Color(0xFFE3F2FD)
@@ -1064,7 +1062,6 @@ private fun FsmStatusBanner(
         TaskStage.VALIDATION -> Color(0xFFFFF3E0)
         TaskStage.DONE -> Color(0xFFF3E5F5)
         TaskStage.ERROR -> Color(0xFFFFEBEE)
-        null -> MaterialTheme.colorScheme.surfaceVariant
     }
     val accentColor = when (stage) {
         TaskStage.PLANNING -> Color(0xFF1565C0)
@@ -1072,7 +1069,6 @@ private fun FsmStatusBanner(
         TaskStage.VALIDATION -> Color(0xFFE65100)
         TaskStage.DONE -> Color(0xFF6A1B9A)
         TaskStage.ERROR -> Color(0xFFB71C1C)
-        null -> MaterialTheme.colorScheme.primary
     }
 
     Surface(
@@ -1466,7 +1462,7 @@ private fun SummaryPinBanner(summary: String) {
 }
 
 @Composable
-private fun FactsPinBanner(facts: List<FactEntity>) {
+private fun FactsPinBanner(facts: List<FactData>) {
     var expanded by remember { mutableStateOf(false) }
     val preview = remember(facts) {
         facts.firstOrNull()?.let { "${it.factKey}: ${it.factValue}" } ?: ""

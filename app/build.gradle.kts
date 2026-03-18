@@ -24,6 +24,7 @@ android {
             if (f.exists()) props.load(f.inputStream())
         }
         buildConfigField("String", "TELEGRAM_MCP_PASSWORD", "\"${localProps.getProperty("TELEGRAM_MCP_PASSWORD", "")}\"")
+        buildConfigField("String", "PROXY_API_KEY", "\"${localProps.getProperty("PROXY_API_KEY", "")}\"")
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {
@@ -62,6 +63,7 @@ android {
 }
 
 dependencies {
+    implementation(project(":shared"))
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.lifecycle.runtime.ktx)
     implementation(libs.androidx.activity.compose)
@@ -77,10 +79,6 @@ dependencies {
     implementation(libs.koin.android)
     implementation(libs.koin.androidx.compose)
 
-    // Retrofit + Gson
-    implementation(libs.retrofit)
-    implementation(libs.retrofit.converter.gson)
-    implementation(libs.okhttp.logging.interceptor)
 
     // Coroutines
     implementation(libs.kotlinx.coroutines.android)

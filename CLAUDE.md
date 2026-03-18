@@ -131,7 +131,7 @@ Stored globally in SharedPreferences. When enabled, injected into FSM instructio
 
 ## Key Constraints
 
-- **API key hardcoded** in `di/AppModule.kt`. Backend is an OpenAI-compatible proxy at `https://api.proxyapi.ru/openai/v1/`.
+- **API key** хранится в `local.properties` как `PROXY_API_KEY`, передаётся через `BuildConfig.PROXY_API_KEY` в `di/AppModule.kt`. Backend — OpenAI-compatible proxy `https://api.proxyapi.ru/openai/v1/`.
 - **MCP SDK:** `io.modelcontextprotocol:kotlin-sdk-client:0.9.0` + Ktor 3.2.3 added as dependencies (server artifacts excluded). Kotlin upgraded to 2.1.0, KSP 2.1.0-1.0.29 to match.
 - **ВкусВилл MCP:** `https://mcp001.vkusvill.ru/mcp` — product search. Full initialize handshake + session ID header. `vkusVillEnabled` persisted in SharedPreferences (`mcp_prefs`).
 - **Telegram MCP:** `http://10.0.2.2:8080/mcp` — local server (emulator). No initialize handshake, stateless HTTP POST, Basic Auth. Password from `local.properties` → `BuildConfig.TELEGRAM_MCP_PASSWORD`. `telegramEnabled` persisted in SharedPreferences (`telegram_mcp_prefs`).

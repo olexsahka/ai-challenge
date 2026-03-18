@@ -1,8 +1,9 @@
 package com.example.myapplication
 
 import com.example.myapplication.data.db.entity.TaskFsmEntity
-import com.example.myapplication.data.db.entity.TaskStage
 import com.example.myapplication.data.repository.TaskMemory
+import com.example.myapplication.domain.model.TaskFsmState
+import com.example.myapplication.domain.model.TaskStage
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.*
 import org.junit.Before
@@ -29,7 +30,7 @@ class TaskFsmRepositoryTest {
     @Test
     fun `getOrCreate creates new FSM with default PLANNING stage`() = runTest {
         val fsm = repo.getOrCreate("session-1")
-        assertEquals(TaskStage.PLANNING.name, fsm.stage)
+        assertEquals(TaskStage.PLANNING, fsm.stage)
         assertEquals(1, fsm.step)
         assertEquals("generate_plan", fsm.expectedAction)
         assertFalse(fsm.paused)
@@ -41,7 +42,7 @@ class TaskFsmRepositoryTest {
         val existing = TaskFsmEntity(sessionId = "session-1", stage = TaskStage.EXECUTION.name, step = 3)
         dao.upsert(existing)
         val fsm = repo.getOrCreate("session-1")
-        assertEquals(TaskStage.EXECUTION.name, fsm.stage)
+        assertEquals(TaskStage.EXECUTION, fsm.stage)
         assertEquals(3, fsm.step)
     }
 
@@ -54,7 +55,7 @@ class TaskFsmRepositoryTest {
         repo.getOrCreate("session-1")
         repo.transitionTo("session-1", TaskStage.EXECUTION, 2, "execute_step")
         val fsm = repo.get("session-1")!!
-        assertEquals(TaskStage.EXECUTION.name, fsm.stage)
+        assertEquals(TaskStage.EXECUTION, fsm.stage)
         assertEquals(2, fsm.step)
         assertEquals("execute_step", fsm.expectedAction)
     }
@@ -84,7 +85,7 @@ class TaskFsmRepositoryTest {
         repo.getOrCreate("session-1")
         repo.markDone("session-1")
         val fsm = repo.get("session-1")!!
-        assertEquals(TaskStage.DONE.name, fsm.stage)
+        assertEquals(TaskStage.DONE, fsm.stage)
         assertEquals("finalize", fsm.expectedAction)
     }
 
@@ -99,7 +100,7 @@ class TaskFsmRepositoryTest {
         val fsm = repo.get("s1")!!
         assertTrue(fsm.paused)
         assertFalse(fsm.autoRun)
-        assertEquals(TaskStage.EXECUTION.name, fsm.savedStage)
+        assertEquals(TaskStage.EXECUTION, fsm.savedStage)
         assertEquals(3, fsm.savedStep)
         assertEquals("execute_step", fsm.savedExpectedAction)
         assertEquals("wait", fsm.expectedAction)
@@ -110,7 +111,7 @@ class TaskFsmRepositoryTest {
         dao.upsert(TaskFsmEntity(sessionId = "s1", paused = true, expectedAction = "wait", savedStage = TaskStage.EXECUTION.name))
         repo.pause("s1")
         val fsm = repo.get("s1")!!
-        assertEquals(TaskStage.EXECUTION.name, fsm.savedStage) // unchanged
+        assertEquals(TaskStage.EXECUTION, fsm.savedStage) // unchanged
     }
 
     @Test
@@ -126,7 +127,7 @@ class TaskFsmRepositoryTest {
         repo.resume("s1")
         val fsm = repo.get("s1")!!
         assertFalse(fsm.paused)
-        assertEquals(TaskStage.EXECUTION.name, fsm.stage)
+        assertEquals(TaskStage.EXECUTION, fsm.stage)
         assertEquals(2, fsm.step)
         assertEquals("execute_step", fsm.expectedAction)
         assertNull(fsm.savedStage)
@@ -160,7 +161,7 @@ class TaskFsmRepositoryTest {
         repo.enableAutoRun("s1")
         val fsm = repo.get("s1")!!
         assertTrue(fsm.autoRun)
-        assertEquals(TaskStage.PLANNING.name, fsm.stage)
+        assertEquals(TaskStage.PLANNING, fsm.stage)
     }
 
     @Test
@@ -180,7 +181,7 @@ class TaskFsmRepositoryTest {
         dao.upsert(TaskFsmEntity(sessionId = "s1", stage = TaskStage.PLANNING.name, autoRun = true))
         repo.setError("s1")
         val fsm = repo.get("s1")!!
-        assertEquals(TaskStage.ERROR.name, fsm.stage)
+        assertEquals(TaskStage.ERROR, fsm.stage)
         assertFalse(fsm.autoRun)
         assertEquals("retry", fsm.expectedAction)
     }
@@ -200,7 +201,7 @@ class TaskFsmRepositoryTest {
         dao.upsert(TaskFsmEntity(sessionId = "s1", stage = TaskStage.VALIDATION.name))
         repo.validationFailed("s1")
         val fsm = repo.get("s1")!!
-        assertEquals(TaskStage.EXECUTION.name, fsm.stage)
+        assertEquals(TaskStage.EXECUTION, fsm.stage)
         assertEquals("execute_step", fsm.expectedAction)
     }
 
@@ -213,7 +214,7 @@ class TaskFsmRepositoryTest {
         dao.upsert(TaskFsmEntity(sessionId = "s1", stage = TaskStage.DONE.name, step = 5, autoRun = true))
         repo.reset("s1")
         val fsm = repo.get("s1")!!
-        assertEquals(TaskStage.PLANNING.name, fsm.stage)
+        assertEquals(TaskStage.PLANNING, fsm.stage)
         assertEquals(1, fsm.step)
         assertFalse(fsm.autoRun)
     }
@@ -230,35 +231,35 @@ class TaskFsmRepositoryTest {
     // -------------------------------------------------------------------------
 
     @Test
-    fun `toInstructionsBlock contains stage step and expectedAction`() {
-        val fsm = TaskFsmEntity(sessionId = "s1", stage = TaskStage.EXECUTION.name, step = 2, expectedAction = "execute_step")
-        val block = repo.toInstructionsBlock(fsm)
+    fun `toInstructionsBlock contains stage step and expectedAction`() = runTest {
+        val fsm = repo.getOrCreate("s1")
+        repo.transitionTo("s1", TaskStage.EXECUTION, 2, "execute_step")
+        val updatedFsm = repo.get("s1")!!
+        val block = repo.toInstructionsBlock(updatedFsm, null, null, false, null, false)
         assertTrue(block.contains("stage: execution"))
         assertTrue(block.contains("step: 2"))
         assertTrue(block.contains("expected_action: execute_step"))
     }
 
     @Test
-    fun `toInstructionsBlock includes task name and description when enabled`() {
-        val fsm = TaskFsmEntity(sessionId = "s1")
-        val task = TaskMemory(name = "My Task", description = "Build an app", enabled = true)
-        val block = repo.toInstructionsBlock(fsm, task)
+    fun `toInstructionsBlock includes task name and description when enabled`() = runTest {
+        val fsm = repo.getOrCreate("s1")
+        val block = repo.toInstructionsBlock(fsm, "My Task", "Build an app", true, null, false)
         assertTrue(block.contains("Task: My Task"))
         assertTrue(block.contains("Description: Build an app"))
     }
 
     @Test
-    fun `toInstructionsBlock omits task info when disabled`() {
-        val fsm = TaskFsmEntity(sessionId = "s1")
-        val task = TaskMemory(name = "My Task", description = "Build an app", enabled = false)
-        val block = repo.toInstructionsBlock(fsm, task)
+    fun `toInstructionsBlock omits task info when disabled`() = runTest {
+        val fsm = repo.getOrCreate("s1")
+        val block = repo.toInstructionsBlock(fsm, "My Task", "Build an app", false, null, false)
         assertFalse(block.contains("Task: My Task"))
     }
 
     @Test
-    fun `toInstructionsBlock omits task info when null`() {
-        val fsm = TaskFsmEntity(sessionId = "s1")
-        val block = repo.toInstructionsBlock(fsm, null)
+    fun `toInstructionsBlock omits task info when null`() = runTest {
+        val fsm = repo.getOrCreate("s1")
+        val block = repo.toInstructionsBlock(fsm, null, null, true, null, false)
         assertFalse(block.contains("Task:"))
     }
 }

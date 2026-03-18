@@ -1,6 +1,6 @@
 package com.example.myapplication.data.repository
 
-import com.example.myapplication.data.api.AnthropicApi
+import com.example.myapplication.domain.api.LLMApiClient
 import com.example.myapplication.data.api.model.ChatRequest
 import com.example.myapplication.data.api.model.InputMessage
 import com.example.myapplication.data.api.model.extractText
@@ -8,7 +8,7 @@ import com.example.myapplication.domain.model.Message
 import com.example.myapplication.domain.model.MessageMeta
 import com.example.myapplication.domain.repository.ChatRepository
 
-class ChatRepositoryImpl(private val api: AnthropicApi) : ChatRepository {
+class ChatRepositoryImpl(private val api: LLMApiClient) : ChatRepository {
 
     override suspend fun sendMessage(
         messages: List<Message>,

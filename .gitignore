@@ -13,3 +13,8 @@
 .externalNativeBuild
 .cxx
 local.properties
+/shared/build/
+/.claude/worktrees/agent-ae79b76c/
+/webClient/build
+/.kotlin/
+/.idea/artifacts

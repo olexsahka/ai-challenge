@@ -1,7 +1,6 @@
 package com.example.myapplication.data.repository
 
-import android.content.Context
-import androidx.core.content.edit
+import com.example.myapplication.platform.KeyValueStorage
 
 data class UserInformation(
     val name: String = "",
@@ -18,37 +17,36 @@ data class TaskMemory(
     val enabled: Boolean = false
 )
 
-class UserProfileRepository(context: Context) {
-    private val prefs = context.getSharedPreferences("user_profile", Context.MODE_PRIVATE)
+class UserProfileRepository(private val storage: KeyValueStorage) {
 
     var userInformation: UserInformation
         get() = UserInformation(
-            name = prefs.getString(KEY_USER_NAME, "") ?: "",
-            occupation = prefs.getString(KEY_USER_OCCUPATION, "") ?: "",
-            language = prefs.getString(KEY_USER_LANGUAGE, "") ?: "",
-            responseStyle = prefs.getString(KEY_RESPONSE_STYLE, "") ?: "",
-            responseFormat = prefs.getString(KEY_RESPONSE_FORMAT, "") ?: "",
-            additionalNotes = prefs.getString(KEY_ADDITIONAL_NOTES, "") ?: ""
+            name = storage.getString(KEY_USER_NAME) ?: "",
+            occupation = storage.getString(KEY_USER_OCCUPATION) ?: "",
+            language = storage.getString(KEY_USER_LANGUAGE) ?: "",
+            responseStyle = storage.getString(KEY_RESPONSE_STYLE) ?: "",
+            responseFormat = storage.getString(KEY_RESPONSE_FORMAT) ?: "",
+            additionalNotes = storage.getString(KEY_ADDITIONAL_NOTES) ?: ""
         )
-        set(value) = prefs.edit {
-            putString(KEY_USER_NAME, value.name)
-            putString(KEY_USER_OCCUPATION, value.occupation)
-            putString(KEY_USER_LANGUAGE, value.language)
-            putString(KEY_RESPONSE_STYLE, value.responseStyle)
-            putString(KEY_RESPONSE_FORMAT, value.responseFormat)
-            putString(KEY_ADDITIONAL_NOTES, value.additionalNotes)
+        set(value) {
+            storage.putString(KEY_USER_NAME, value.name)
+            storage.putString(KEY_USER_OCCUPATION, value.occupation)
+            storage.putString(KEY_USER_LANGUAGE, value.language)
+            storage.putString(KEY_RESPONSE_STYLE, value.responseStyle)
+            storage.putString(KEY_RESPONSE_FORMAT, value.responseFormat)
+            storage.putString(KEY_ADDITIONAL_NOTES, value.additionalNotes)
         }
 
     var taskMemory: TaskMemory
         get() = TaskMemory(
-            name = prefs.getString(KEY_TASK_NAME, "") ?: "",
-            description = prefs.getString(KEY_TASK_DESCRIPTION, "") ?: "",
-            enabled = prefs.getBoolean(KEY_TASK_ENABLED, false)
+            name = storage.getString(KEY_TASK_NAME) ?: "",
+            description = storage.getString(KEY_TASK_DESCRIPTION) ?: "",
+            enabled = storage.getBoolean(KEY_TASK_ENABLED, false)
         )
-        set(value) = prefs.edit {
-            putString(KEY_TASK_NAME, value.name)
-            putString(KEY_TASK_DESCRIPTION, value.description)
-            putBoolean(KEY_TASK_ENABLED, value.enabled)
+        set(value) {
+            storage.putString(KEY_TASK_NAME, value.name)
+            storage.putString(KEY_TASK_DESCRIPTION, value.description)
+            storage.putBoolean(KEY_TASK_ENABLED, value.enabled)
         }
 
     private fun buildUserInfoLines(info: UserInformation): List<String> = buildList {

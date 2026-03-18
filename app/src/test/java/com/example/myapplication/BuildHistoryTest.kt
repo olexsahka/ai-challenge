@@ -7,14 +7,14 @@ import com.example.myapplication.data.api.model.ModelsResponse
 import com.example.myapplication.data.api.model.OutputContent
 import com.example.myapplication.data.api.model.OutputItem
 import com.example.myapplication.data.api.model.UsageInfo
-import com.example.myapplication.data.db.entity.FactEntity
 import com.example.myapplication.data.db.entity.MemoryStrategy
-import com.example.myapplication.data.db.entity.SummaryEntity
+import com.example.myapplication.domain.model.FactData
+import com.example.myapplication.domain.model.SummaryData
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.*
 import org.junit.Before
 import org.junit.Test
-import com.example.myapplication.data.api.AnthropicApi
+import com.example.myapplication.domain.api.LLMApiClient
 
 /**
  * Tests for LLMAgent.buildHistory (все 5 стратегий памяти).
@@ -25,33 +25,36 @@ import com.example.myapplication.data.api.AnthropicApi
  */
 class BuildHistoryTest {
 
-    private lateinit var sessionDao: FakeSessionDao
-    private lateinit var messageDao: FakeMessageDao
-    private lateinit var summaryDao: FakeSummaryDao
-    private lateinit var factDao: FakeFactDao
-    private lateinit var branchNodeDao: FakeBranchNodeDao
+    private lateinit var sessionRepo: FakeSessionRepository
+    private lateinit var messageRepo: FakeMessageRepository
+    private lateinit var summaryRepo: FakeSummaryRepository
+    private lateinit var factRepo: FakeFactRepository
+    private lateinit var branchNodeRepo: FakeBranchNodeRepository
     private lateinit var api: CapturingAnthropicApi
 
-    private fun makeAgent(apiOverride: AnthropicApi = api): LLMAgent = LLMAgent(
+    private fun makeAgent(apiOverride: LLMApiClient = api): LLMAgent = LLMAgent(
         api = apiOverride,
-        sessionDao = sessionDao,
-        messageDao = messageDao,
+        sessionRepo = sessionRepo,
+        messageRepo = messageRepo,
         memory = makeMockMemory(),
-        summaryDao = summaryDao,
-        factDao = factDao,
-        branchNodeDao = branchNodeDao,
+        summaryRepo = summaryRepo,
+        factRepo = factRepo,
+        branchNodeRepo = branchNodeRepo,
         userProfileRepository = makeMockUserProfile(),
         taskFsmRepository = makeMockTaskFsmRepository(),
-        constraintsRepository = makeMockConstraintsRepository()
+        constraintsRepository = makeMockConstraintsRepository(),
+        clock = FakeClock(),
+        uuidGenerator = FakeUuidGenerator(),
+        dateFormatter = FakeDateFormatter()
     )
 
     @Before
     fun setup() {
-        sessionDao = FakeSessionDao()
-        messageDao = FakeMessageDao()
-        summaryDao = FakeSummaryDao()
-        factDao = FakeFactDao()
-        branchNodeDao = FakeBranchNodeDao()
+        sessionRepo = FakeSessionRepository()
+        messageRepo = FakeMessageRepository()
+        summaryRepo = FakeSummaryRepository()
+        factRepo = FakeFactRepository()
+        branchNodeRepo = FakeBranchNodeRepository()
         api = CapturingAnthropicApi(simpleResponse("OK"))
     }
 
@@ -62,11 +65,11 @@ class BuildHistoryTest {
     @Test
     fun `FULL strategy returns all messages`() = runTest {
         val session = sessionOf(strategy = MemoryStrategy.FULL)
-        sessionDao.sessions[session.id] = session
+        sessionRepo.sessions[session.id] = session
         // Pre-populate 4 messages
         repeat(4) { i ->
-            messageDao.messages.add(makeUserMessage(i + 1, session.id))
-            messageDao.messages.add(makeAssistantMessage(i + 1, session.id))
+            messageRepo.messages.add(makeUserMessage(i + 1, session.id))
+            messageRepo.messages.add(makeAssistantMessage(i + 1, session.id))
         }
 
         makeAgent().sendMessage(session.id, "new user message")
@@ -79,10 +82,10 @@ class BuildHistoryTest {
     @Test
     fun `FULL strategy preserves message order`() = runTest {
         val session = sessionOf(strategy = MemoryStrategy.FULL)
-        sessionDao.sessions[session.id] = session
-        messageDao.messages.add(makeUserMessage(1, session.id))
-        messageDao.messages.add(makeAssistantMessage(1, session.id))
-        messageDao.messages.add(makeUserMessage(2, session.id))
+        sessionRepo.sessions[session.id] = session
+        messageRepo.messages.add(makeUserMessage(1, session.id))
+        messageRepo.messages.add(makeAssistantMessage(1, session.id))
+        messageRepo.messages.add(makeUserMessage(2, session.id))
 
         makeAgent().sendMessage(session.id, "fourth")
 
@@ -101,11 +104,11 @@ class BuildHistoryTest {
     @Test
     fun `SLIDING_WINDOW returns only last N messages`() = runTest {
         val session = sessionOf(strategy = MemoryStrategy.SLIDING_WINDOW, slidingWindowN = 3)
-        sessionDao.sessions[session.id] = session
+        sessionRepo.sessions[session.id] = session
         // Add 10 messages (5 pairs)
         repeat(5) { i ->
-            messageDao.messages.add(makeUserMessage(i + 1, session.id))
-            messageDao.messages.add(makeAssistantMessage(i + 1, session.id))
+            messageRepo.messages.add(makeUserMessage(i + 1, session.id))
+            messageRepo.messages.add(makeAssistantMessage(i + 1, session.id))
         }
 
         makeAgent().sendMessage(session.id, "new")
@@ -119,9 +122,9 @@ class BuildHistoryTest {
     @Test
     fun `SLIDING_WINDOW when history smaller than N returns all`() = runTest {
         val session = sessionOf(strategy = MemoryStrategy.SLIDING_WINDOW, slidingWindowN = 10)
-        sessionDao.sessions[session.id] = session
-        messageDao.messages.add(makeUserMessage(1, session.id))
-        messageDao.messages.add(makeAssistantMessage(1, session.id))
+        sessionRepo.sessions[session.id] = session
+        messageRepo.messages.add(makeUserMessage(1, session.id))
+        messageRepo.messages.add(makeAssistantMessage(1, session.id))
 
         makeAgent().sendMessage(session.id, "new")
 
@@ -137,10 +140,10 @@ class BuildHistoryTest {
     @Test
     fun `STICKY_FACTS with no facts sends only recent messages`() = runTest {
         val session = sessionOf(strategy = MemoryStrategy.STICKY_FACTS, stickyFactsN = 3)
-        sessionDao.sessions[session.id] = session
+        sessionRepo.sessions[session.id] = session
         repeat(5) { i ->
-            messageDao.messages.add(makeUserMessage(i + 1, session.id))
-            messageDao.messages.add(makeAssistantMessage(i + 1, session.id))
+            messageRepo.messages.add(makeUserMessage(i + 1, session.id))
+            messageRepo.messages.add(makeAssistantMessage(i + 1, session.id))
         }
         // Use SequentialAnthropicApi to capture the FIRST request (main chat), not the updateFacts request
         val seqApi = SequentialAnthropicApi(
@@ -149,8 +152,9 @@ class BuildHistoryTest {
                 simpleResponse("fact: value")        // updateFacts response (if called)
             )
         )
-        LLMAgent(seqApi, sessionDao, messageDao, makeMockMemory(), summaryDao, factDao,
-            branchNodeDao, makeMockUserProfile(), makeMockTaskFsmRepository(), makeMockConstraintsRepository()).sendMessage(session.id, "new")
+        LLMAgent(seqApi, sessionRepo, messageRepo, makeMockMemory(), summaryRepo, factRepo,
+            branchNodeRepo, makeMockUserProfile(), makeMockTaskFsmRepository(), makeMockConstraintsRepository(),
+            FakeClock(), FakeUuidGenerator(), FakeDateFormatter()).sendMessage(session.id, "new")
 
         val mainRequest = seqApi.requests.first()
         // No facts — only last stickyFactsN=3 from 11 messages = 3
@@ -161,13 +165,13 @@ class BuildHistoryTest {
     @Test
     fun `STICKY_FACTS with facts prepends facts block`() = runTest {
         val session = sessionOf(strategy = MemoryStrategy.STICKY_FACTS, stickyFactsN = 2)
-        sessionDao.sessions[session.id] = session
-        factDao.facts[session.id] = mutableListOf(
-            FactEntity(session.id, "user_name", "Alice"),
-            FactEntity(session.id, "goal", "build KMP app")
+        sessionRepo.sessions[session.id] = session
+        factRepo.facts[session.id] = mutableListOf(
+            FactData(session.id, "user_name", "Alice"),
+            FactData(session.id, "goal", "build KMP app")
         )
-        messageDao.messages.add(makeUserMessage(1, session.id))
-        messageDao.messages.add(makeAssistantMessage(1, session.id))
+        messageRepo.messages.add(makeUserMessage(1, session.id))
+        messageRepo.messages.add(makeAssistantMessage(1, session.id))
 
         val seqApi = SequentialAnthropicApi(
             listOf(
@@ -175,8 +179,9 @@ class BuildHistoryTest {
                 simpleResponse("user_name: Alice\ngoal: build KMP app")
             )
         )
-        LLMAgent(seqApi, sessionDao, messageDao, makeMockMemory(), summaryDao, factDao,
-            branchNodeDao, makeMockUserProfile(), makeMockTaskFsmRepository(), makeMockConstraintsRepository()).sendMessage(session.id, "new")
+        LLMAgent(seqApi, sessionRepo, messageRepo, makeMockMemory(), summaryRepo, factRepo,
+            branchNodeRepo, makeMockUserProfile(), makeMockTaskFsmRepository(), makeMockConstraintsRepository(),
+            FakeClock(), FakeUuidGenerator(), FakeDateFormatter()).sendMessage(session.id, "new")
 
         val sentInput = seqApi.requests.first().input
         // facts user msg + facts assistant ack + last 2 existing + 1 new user = 5
@@ -194,7 +199,7 @@ class BuildHistoryTest {
     fun `STICKY_FACTS after sendMessage triggers updateFacts API call`() = runTest {
         // The updateFacts makes a second API call — verify 2 calls were made
         val session = sessionOf(strategy = MemoryStrategy.STICKY_FACTS, stickyFactsN = 3)
-        sessionDao.sessions[session.id] = session
+        sessionRepo.sessions[session.id] = session
 
         val countingApi = CountingAnthropicApi(
             listOf(
@@ -219,9 +224,9 @@ class BuildHistoryTest {
             compressionN = 5,
             compressionM = 6
         )
-        sessionDao.sessions[session.id] = session
+        sessionRepo.sessions[session.id] = session
         // 3 messages — below compressionN=5
-        repeat(3) { i -> messageDao.messages.add(makeUserMessage(i + 1, session.id)) }
+        repeat(3) { i -> messageRepo.messages.add(makeUserMessage(i + 1, session.id)) }
 
         makeAgent().sendMessage(session.id, "new")
 
@@ -239,9 +244,9 @@ class BuildHistoryTest {
             compressionN = 3,
             compressionM = 6
         )
-        sessionDao.sessions[session.id] = session
+        sessionRepo.sessions[session.id] = session
         // 8 messages (> compressionN=3)
-        repeat(8) { i -> messageDao.messages.add(makeUserMessage(i + 1, session.id)) }
+        repeat(8) { i -> messageRepo.messages.add(makeUserMessage(i + 1, session.id)) }
 
         val summaryApi = CapturingAnthropicApi(simpleResponse("OK"))
         // First API call = summary generation, second = main response
@@ -271,11 +276,11 @@ class BuildHistoryTest {
             compressionN = 3,
             compressionM = 10  // high M means summary stays fresh for a long time
         )
-        sessionDao.sessions[session.id] = session
+        sessionRepo.sessions[session.id] = session
         // 8 messages
-        repeat(8) { i -> messageDao.messages.add(makeUserMessage(i + 1, session.id)) }
+        repeat(8) { i -> messageRepo.messages.add(makeUserMessage(i + 1, session.id)) }
         // Pre-existing summary covering 5 messages (older = 8+1-3 = 6, coveredCount=6, delta=0 < M=10)
-        summaryDao.summaries[session.id] = SummaryEntity(
+        summaryRepo.summaries[session.id] = SummaryData(
             sessionId = session.id,
             summary = "Cached summary text",
             coveredMessageCount = 6
@@ -299,10 +304,10 @@ class BuildHistoryTest {
             compressionN = 2,
             compressionM = 2  // regenerate after 2 new older messages
         )
-        sessionDao.sessions[session.id] = session
-        repeat(6) { i -> messageDao.messages.add(makeUserMessage(i + 1, session.id)) }
+        sessionRepo.sessions[session.id] = session
+        repeat(6) { i -> messageRepo.messages.add(makeUserMessage(i + 1, session.id)) }
         // coveredMessageCount=3, now older=6+1-2=5, delta=5-3=2 >= M=2 → must regenerate
-        summaryDao.summaries[session.id] = SummaryEntity(
+        summaryRepo.summaries[session.id] = SummaryData(
             sessionId = session.id,
             summary = "Old summary",
             coveredMessageCount = 3
@@ -318,8 +323,8 @@ class BuildHistoryTest {
 
         assertEquals(2, multiApi.requests.size)
         // New summary must be persisted
-        assertNotNull(summaryDao.summaries[session.id])
-        assertEquals("New fresh summary", summaryDao.summaries[session.id]!!.summary)
+        assertNotNull(summaryRepo.summaries[session.id])
+        assertEquals("New fresh summary", summaryRepo.summaries[session.id]!!.summary)
     }
 
     // -------------------------------------------------------------------------
@@ -329,9 +334,9 @@ class BuildHistoryTest {
     @Test
     fun `BRANCHING strategy uses full history for non-node messages`() = runTest {
         val session = sessionOf(strategy = MemoryStrategy.BRANCHING)
-        sessionDao.sessions[session.id] = session
-        messageDao.messages.add(makeUserMessage(1, session.id))
-        messageDao.messages.add(makeAssistantMessage(1, session.id))
+        sessionRepo.sessions[session.id] = session
+        messageRepo.messages.add(makeUserMessage(1, session.id))
+        messageRepo.messages.add(makeAssistantMessage(1, session.id))
 
         makeAgent().sendMessage(session.id, "new")
 
@@ -351,7 +356,7 @@ fun simpleResponse(text: String) = ChatResponse(
     usage = UsageInfo(10, 20)
 )
 
-class CapturingAnthropicApi(private val response: ChatResponse) : AnthropicApi {
+class CapturingAnthropicApi(private val response: ChatResponse)  : LLMApiClient {
     var lastRequest: ChatRequest? = null
     override suspend fun sendMessage(request: ChatRequest): ChatResponse {
         lastRequest = request
@@ -360,7 +365,7 @@ class CapturingAnthropicApi(private val response: ChatResponse) : AnthropicApi {
     override suspend fun getModels() = ModelsResponse(`object` = "list", data = emptyList())
 }
 
-class CountingAnthropicApi(private val responses: List<ChatResponse>) : AnthropicApi {
+class CountingAnthropicApi(private val responses: List<ChatResponse>)  : LLMApiClient {
     var callCount = 0
     val requests = mutableListOf<ChatRequest>()
     override suspend fun sendMessage(request: ChatRequest): ChatResponse {
@@ -370,7 +375,7 @@ class CountingAnthropicApi(private val responses: List<ChatResponse>) : Anthropi
     override suspend fun getModels() = ModelsResponse(`object` = "list", data = emptyList())
 }
 
-class SequentialAnthropicApi(private val responses: List<ChatResponse>) : AnthropicApi {
+class SequentialAnthropicApi(private val responses: List<ChatResponse>)  : LLMApiClient {
     private var idx = 0
     val requests = mutableListOf<ChatRequest>()
     override suspend fun sendMessage(request: ChatRequest): ChatResponse {

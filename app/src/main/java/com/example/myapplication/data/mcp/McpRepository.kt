@@ -24,6 +24,8 @@ open class McpRepository(
 
     override val isConnected: Boolean get() = mcpClient?.isConnected ?: false
 
-    override suspend fun callTool(toolName: String, arguments: org.json.JSONObject): String =
-        mcpClient!!.callTool(toolName, arguments)
+    override suspend fun callTool(toolName: String, argumentsJson: String): String {
+        val arguments = org.json.JSONObject(argumentsJson)
+        return mcpClient!!.callTool(toolName, arguments)
+    }
 }

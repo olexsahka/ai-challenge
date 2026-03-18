@@ -30,6 +30,8 @@ open class TelegramMcpRepository(
 
     override fun disconnect() = client?.disconnect() ?: Unit
 
-    override suspend fun callTool(toolName: String, arguments: org.json.JSONObject): String =
-        client?.callTool(toolName, arguments) ?: "Error: client not initialized"
+    override suspend fun callTool(toolName: String, argumentsJson: String): String {
+        val arguments = org.json.JSONObject(argumentsJson)
+        return client?.callTool(toolName, arguments) ?: "Error: client not initialized"
+    }
 }

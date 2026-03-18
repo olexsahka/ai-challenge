@@ -16,14 +16,14 @@ import org.junit.Test
  */
 class BuildInstructionsTest {
 
-    private lateinit var sessionDao: FakeSessionDao
-    private lateinit var messageDao: FakeMessageDao
+    private lateinit var sessionRepo: FakeSessionRepository
+    private lateinit var messageRepo: FakeMessageRepository
     private lateinit var api: CapturingAnthropicApi
 
     @Before
     fun setup() {
-        sessionDao = FakeSessionDao()
-        messageDao = FakeMessageDao()
+        sessionRepo = FakeSessionRepository()
+        messageRepo = FakeMessageRepository()
         api = CapturingAnthropicApi(simpleResponse("OK"))
     }
 
@@ -32,15 +32,18 @@ class BuildInstructionsTest {
         profileContext: String = ""
     ): LLMAgent = LLMAgent(
         api = api,
-        sessionDao = sessionDao,
-        messageDao = messageDao,
+        sessionRepo = sessionRepo,
+        messageRepo = messageRepo,
         memory = makeMockMemory(memoryContext),
-        summaryDao = FakeSummaryDao(),
-        factDao = FakeFactDao(),
-        branchNodeDao = FakeBranchNodeDao(),
+        summaryRepo = FakeSummaryRepository(),
+        factRepo = FakeFactRepository(),
+        branchNodeRepo = FakeBranchNodeRepository(),
         userProfileRepository = makeMockUserProfile(profileContext),
         taskFsmRepository = makeMockTaskFsmRepository(),
-        constraintsRepository = makeMockConstraintsRepository()
+        constraintsRepository = makeMockConstraintsRepository(),
+        clock = FakeClock(),
+        uuidGenerator = FakeUuidGenerator(),
+        dateFormatter = FakeDateFormatter()
     )
 
     // -------------------------------------------------------------------------
@@ -50,7 +53,7 @@ class BuildInstructionsTest {
     @Test
     fun `systemPrompt is included in instructions`() = runTest {
         val session = sessionOf(systemPrompt = "You are a helpful assistant.")
-        sessionDao.sessions[session.id] = session
+        sessionRepo.sessions[session.id] = session
 
         makeAgent().sendMessage(session.id, "hello")
 
@@ -62,7 +65,7 @@ class BuildInstructionsTest {
     @Test
     fun `blank systemPrompt alone results in null instructions`() = runTest {
         val session = sessionOf(systemPrompt = "")
-        sessionDao.sessions[session.id] = session
+        sessionRepo.sessions[session.id] = session
 
         makeAgent().sendMessage(session.id, "hello")
 
@@ -72,7 +75,7 @@ class BuildInstructionsTest {
     @Test
     fun `whitespace-only systemPrompt results in null instructions`() = runTest {
         val session = sessionOf(systemPrompt = "   ")
-        sessionDao.sessions[session.id] = session
+        sessionRepo.sessions[session.id] = session
 
         makeAgent().sendMessage(session.id, "hello")
 
@@ -86,7 +89,7 @@ class BuildInstructionsTest {
     @Test
     fun `memory context is appended to instructions`() = runTest {
         val session = sessionOf(systemPrompt = "")
-        sessionDao.sessions[session.id] = session
+        sessionRepo.sessions[session.id] = session
 
         makeAgent(memoryContext = "Stored memories:\n- lang: Kotlin")
             .sendMessage(session.id, "hello")
@@ -100,7 +103,7 @@ class BuildInstructionsTest {
     @Test
     fun `empty memory context does not add instructions`() = runTest {
         val session = sessionOf(systemPrompt = "")
-        sessionDao.sessions[session.id] = session
+        sessionRepo.sessions[session.id] = session
 
         makeAgent(memoryContext = "").sendMessage(session.id, "hello")
 
@@ -114,7 +117,7 @@ class BuildInstructionsTest {
     @Test
     fun `user profile context is appended to instructions`() = runTest {
         val session = sessionOf(systemPrompt = "")
-        sessionDao.sessions[session.id] = session
+        sessionRepo.sessions[session.id] = session
 
         makeAgent(profileContext = "User profile:\nAlice, senior developer")
             .sendMessage(session.id, "hello")
@@ -128,7 +131,7 @@ class BuildInstructionsTest {
     @Test
     fun `empty user profile does not add instructions`() = runTest {
         val session = sessionOf(systemPrompt = "")
-        sessionDao.sessions[session.id] = session
+        sessionRepo.sessions[session.id] = session
 
         makeAgent(profileContext = "").sendMessage(session.id, "hello")
 
@@ -142,7 +145,7 @@ class BuildInstructionsTest {
     @Test
     fun `systemPrompt memory and profile all appear in instructions`() = runTest {
         val session = sessionOf(systemPrompt = "Be concise.")
-        sessionDao.sessions[session.id] = session
+        sessionRepo.sessions[session.id] = session
 
         makeAgent(
             memoryContext = "Stored memories:\n- key: value",
@@ -159,7 +162,7 @@ class BuildInstructionsTest {
     @Test
     fun `sections are separated by blank line`() = runTest {
         val session = sessionOf(systemPrompt = "Prompt.")
-        sessionDao.sessions[session.id] = session
+        sessionRepo.sessions[session.id] = session
 
         makeAgent(memoryContext = "Stored memories:\n- k: v")
             .sendMessage(session.id, "hello")
@@ -175,7 +178,7 @@ class BuildInstructionsTest {
     @Test
     fun `model from session is sent in request`() = runTest {
         val session = sessionOf(model = "gpt-4o")
-        sessionDao.sessions[session.id] = session
+        sessionRepo.sessions[session.id] = session
 
         makeAgent().sendMessage(session.id, "hello")
 
@@ -185,7 +188,7 @@ class BuildInstructionsTest {
     @Test
     fun `temperature 1_0 is sent as null`() = runTest {
         val session = sessionOf(temperature = 1.0f)
-        sessionDao.sessions[session.id] = session
+        sessionRepo.sessions[session.id] = session
 
         makeAgent().sendMessage(session.id, "hello")
 
@@ -195,7 +198,7 @@ class BuildInstructionsTest {
     @Test
     fun `temperature other than 1_0 is sent`() = runTest {
         val session = sessionOf(temperature = 0.7f)
-        sessionDao.sessions[session.id] = session
+        sessionRepo.sessions[session.id] = session
 
         makeAgent().sendMessage(session.id, "hello")
 

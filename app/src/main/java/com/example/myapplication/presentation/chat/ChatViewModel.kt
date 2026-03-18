@@ -2,7 +2,7 @@ package com.example.myapplication.presentation.chat
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import com.example.myapplication.data.api.AnthropicApi
+import com.example.myapplication.domain.api.LLMApiClient
 import com.example.myapplication.data.repository.SettingsRepository
 import com.example.myapplication.domain.model.Message
 import com.example.myapplication.domain.model.RestrictionProfile
@@ -23,7 +23,7 @@ import java.util.UUID
 class ChatViewModel(
     private val sendMessageUseCase: SendMessageUseCase,
     private val settingsRepository: SettingsRepository,
-    private val api: AnthropicApi,
+    private val api: LLMApiClient,
     private val httpClient: OkHttpClient
 ) : ViewModel() {
 

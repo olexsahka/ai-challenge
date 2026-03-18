@@ -2,7 +2,7 @@ package com.example.myapplication
 
 import com.example.myapplication.agent.LLMAgent
 import com.example.myapplication.agent.TaskFsmRepository
-import com.example.myapplication.data.api.AnthropicApi
+import com.example.myapplication.domain.api.LLMApiClient
 import com.example.myapplication.data.api.model.ChatRequest
 import com.example.myapplication.data.api.model.ChatResponse
 import com.example.myapplication.data.api.model.ModelsResponse
@@ -10,7 +10,7 @@ import com.example.myapplication.data.api.model.OutputContent
 import com.example.myapplication.data.api.model.OutputItem
 import com.example.myapplication.data.api.model.UsageInfo
 import com.example.myapplication.data.db.entity.TaskFsmEntity
-import com.example.myapplication.data.db.entity.TaskStage
+import com.example.myapplication.domain.model.TaskStage
 import com.example.myapplication.data.repository.TaskMemory
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.*
@@ -29,27 +29,27 @@ import org.mockito.kotlin.whenever
  */
 class FsmLLMAgentTest {
 
-    private lateinit var sessionDao: FakeSessionDao
-    private lateinit var messageDao: FakeMessageDao
-    private lateinit var summaryDao: FakeSummaryDao
-    private lateinit var factDao: FakeFactDao
-    private lateinit var branchNodeDao: FakeBranchNodeDao
+    private lateinit var sessionRepo: FakeSessionRepository
+    private lateinit var messageRepo: FakeMessageRepository
+    private lateinit var summaryRepo: FakeSummaryRepository
+    private lateinit var factRepo: FakeFactRepository
+    private lateinit var branchNodeRepo: FakeBranchNodeRepository
     private lateinit var fsmDao: FakeTaskFsmDao
     private lateinit var fsmRepo: TaskFsmRepository
 
     @Before
     fun setup() {
-        sessionDao = FakeSessionDao()
-        messageDao = FakeMessageDao()
-        summaryDao = FakeSummaryDao()
-        factDao = FakeFactDao()
-        branchNodeDao = FakeBranchNodeDao()
+        sessionRepo = FakeSessionRepository()
+        messageRepo = FakeMessageRepository()
+        summaryRepo = FakeSummaryRepository()
+        factRepo = FakeFactRepository()
+        branchNodeRepo = FakeBranchNodeRepository()
         fsmDao = FakeTaskFsmDao()
         fsmRepo = TaskFsmRepository(fsmDao)
     }
 
     // Sequential API that returns responses in order
-    private class SequentialApi(private val responses: List<ChatResponse>) : AnthropicApi {
+    private class SequentialApi(private val responses: List<ChatResponse>)  : LLMApiClient {
         val requests = mutableListOf<ChatRequest>()
         private var index = 0
         override suspend fun sendMessage(request: ChatRequest): ChatResponse {
@@ -72,7 +72,7 @@ class FsmLLMAgentTest {
         return "Plan:\n$lines"
     }
 
-    private fun makeAgent(api: AnthropicApi): LLMAgent {
+    private fun makeAgent(api: LLMApiClient): LLMAgent {
         val profile = org.mockito.kotlin.mock<com.example.myapplication.data.repository.UserProfileRepository>()
         val tm = TaskMemory(name = "app", description = "", enabled = true)
         whenever(profile.taskMemory).thenReturn(tm)
@@ -80,21 +80,24 @@ class FsmLLMAgentTest {
         whenever(profile.userInformationContextString()).thenReturn("")
         return LLMAgent(
             api = api,
-            sessionDao = sessionDao,
-            messageDao = messageDao,
+            sessionRepo = sessionRepo,
+            messageRepo = messageRepo,
             memory = makeMockMemory(),
-            summaryDao = summaryDao,
-            factDao = factDao,
-            branchNodeDao = branchNodeDao,
+            summaryRepo = summaryRepo,
+            factRepo = factRepo,
+            branchNodeRepo = branchNodeRepo,
             userProfileRepository = profile,
             taskFsmRepository = fsmRepo,
-            constraintsRepository = makeMockConstraintsRepository()
+            constraintsRepository = makeMockConstraintsRepository(),
+            clock = FakeClock(),
+            uuidGenerator = FakeUuidGenerator(),
+            dateFormatter = FakeDateFormatter()
         )
     }
 
-    private fun setupSession(id: String = "s1"): com.example.myapplication.data.db.entity.SessionEntity {
+    private fun setupSession(id: String = "s1"): com.example.myapplication.domain.model.Session {
         val session = sessionOf(id = id)
-        sessionDao.sessions[id] = session
+        sessionRepo.sessions[id] = session
         return session
     }
 
@@ -118,7 +121,7 @@ class FsmLLMAgentTest {
         assertTrue("Should ask to proceed to step 1", content.contains("Приступить к шагу 1"))
 
         val fsm = fsmRepo.get(session.id)!!
-        assertEquals(TaskStage.EXECUTION.name, fsm.stage)
+        assertEquals(TaskStage.EXECUTION, fsm.stage)
         assertEquals(1, fsm.step)
         assertEquals(3, fsm.stepCount)
     }
@@ -132,8 +135,8 @@ class FsmLLMAgentTest {
             step = 1, stepCount = 3, expectedAction = "execute_step"
         ))
         // Pre-populate history with planning message
-        messageDao.messages.add(makeUserMessage(1, session.id))
-        messageDao.messages.add(makeAssistantMessage(1, session.id))
+        messageRepo.messages.add(makeUserMessage(1, session.id))
+        messageRepo.messages.add(makeAssistantMessage(1, session.id))
 
         val api = SequentialApi(listOf(fsmResponse("Step 1 done")))
         val agent = makeAgent(api)
@@ -145,7 +148,7 @@ class FsmLLMAgentTest {
         assertTrue("Should ask to proceed to step 2", content.contains("Приступить к шагу 2"))
 
         val fsm = fsmRepo.get(session.id)!!
-        assertEquals(TaskStage.EXECUTION.name, fsm.stage)
+        assertEquals(TaskStage.EXECUTION, fsm.stage)
         assertEquals(2, fsm.step)
     }
 
@@ -156,7 +159,7 @@ class FsmLLMAgentTest {
             sessionId = session.id, stage = TaskStage.EXECUTION.name,
             step = 2, stepCount = 2, expectedAction = "execute_step"
         ))
-        messageDao.messages.add(makeUserMessage(1, session.id))
+        messageRepo.messages.add(makeUserMessage(1, session.id))
 
         val api = SequentialApi(listOf(fsmResponse("Step 2 done")))
         val agent = makeAgent(api)
@@ -168,7 +171,7 @@ class FsmLLMAgentTest {
         assertTrue("Should ask to proceed to validation", content.contains("валидации"))
 
         val fsm = fsmRepo.get(session.id)!!
-        assertEquals(TaskStage.VALIDATION.name, fsm.stage)
+        assertEquals(TaskStage.VALIDATION, fsm.stage)
     }
 
     @Test
@@ -178,7 +181,7 @@ class FsmLLMAgentTest {
             sessionId = session.id, stage = TaskStage.VALIDATION.name,
             step = 1, stepCount = 2, expectedAction = "validate_results"
         ))
-        messageDao.messages.add(makeUserMessage(1, session.id))
+        messageRepo.messages.add(makeUserMessage(1, session.id))
 
         val api = SequentialApi(listOf(fsmResponse("All good, no errors")))
         val agent = makeAgent(api)
@@ -190,7 +193,7 @@ class FsmLLMAgentTest {
         assertTrue("Should ask to finalize", content.contains("Завершить"))
 
         val fsm = fsmRepo.get(session.id)!!
-        assertEquals(TaskStage.DONE.name, fsm.stage)
+        assertEquals(TaskStage.DONE, fsm.stage)
     }
 
     // -------------------------------------------------------------------------
@@ -219,7 +222,7 @@ class FsmLLMAgentTest {
         assertTrue("Should show done stage", content.contains("🏁"))
 
         val fsm = fsmRepo.get(session.id)!!
-        assertEquals(TaskStage.DONE.name, fsm.stage)
+        assertEquals(TaskStage.DONE, fsm.stage)
         assertEquals(5, api.requests.size)
     }
 
@@ -230,10 +233,10 @@ class FsmLLMAgentTest {
             sessionId = session.id, stage = TaskStage.EXECUTION.name,
             step = 1, stepCount = 3, expectedAction = "execute_step", autoRun = true
         ))
-        messageDao.messages.add(makeUserMessage(1, session.id))
+        messageRepo.messages.add(makeUserMessage(1, session.id))
 
         var callCount = 0
-        val api = object : AnthropicApi {
+        val api = object  : LLMApiClient {
             override suspend fun sendMessage(request: ChatRequest): ChatResponse {
                 callCount++
                 // Disable autoRun after first execution step
@@ -271,7 +274,7 @@ class FsmLLMAgentTest {
         assertTrue("Should show error message", content.contains("❌"))
 
         val fsm = fsmRepo.get(session.id)!!
-        assertEquals(TaskStage.ERROR.name, fsm.stage)
+        assertEquals(TaskStage.ERROR, fsm.stage)
     }
 
     @Test
@@ -285,7 +288,7 @@ class FsmLLMAgentTest {
         agent.sendMessage(session.id, "ыыыы")
 
         // The user message and the planning response should be marked as errors
-        val errorMessages = messageDao.messages.filter { it.isError }
+        val errorMessages = messageRepo.messages.filter { it.isError }
         assertTrue("At least user msg and planning response should be marked as error",
             errorMessages.size >= 2)
     }
@@ -334,7 +337,7 @@ class FsmLLMAgentTest {
 
         // After reset, FSM transitioned to EXECUTION
         val fsm = fsmRepo.get(session.id)!!
-        assertEquals(TaskStage.EXECUTION.name, fsm.stage)
+        assertEquals(TaskStage.EXECUTION, fsm.stage)
     }
 
     // -------------------------------------------------------------------------
@@ -345,8 +348,8 @@ class FsmLLMAgentTest {
     fun `DONE stage falls back to normal sendMessage`() = runTest {
         val session = setupSession()
         fsmDao.upsert(TaskFsmEntity(sessionId = session.id, stage = TaskStage.DONE.name))
-        messageDao.messages.add(makeUserMessage(1, session.id))
-        messageDao.messages.add(makeAssistantMessage(1, session.id))
+        messageRepo.messages.add(makeUserMessage(1, session.id))
+        messageRepo.messages.add(makeAssistantMessage(1, session.id))
 
         val api = SequentialApi(listOf(fsmResponse("Here is my follow-up answer")))
         val agent = makeAgent(api)
@@ -378,7 +381,7 @@ class FsmLLMAgentTest {
         assertTrue(result.isSuccess)
 
         val fsm = fsmRepo.get(session.id)!!
-        assertEquals(TaskStage.DONE.name, fsm.stage)
+        assertEquals(TaskStage.DONE, fsm.stage)
     }
 
     // -------------------------------------------------------------------------
@@ -392,7 +395,7 @@ class FsmLLMAgentTest {
             sessionId = session.id, stage = TaskStage.EXECUTION.name,
             step = 1, stepCount = 1, expectedAction = "execute_step", autoRun = true
         ))
-        messageDao.messages.add(makeUserMessage(1, session.id))
+        messageRepo.messages.add(makeUserMessage(1, session.id))
 
         val api = SequentialApi(listOf(
             fsmResponse("Step 1 done"),
@@ -405,7 +408,7 @@ class FsmLLMAgentTest {
         assertTrue(result.isSuccess)
 
         val fsm = fsmRepo.get(session.id)!!
-        assertEquals(TaskStage.DONE.name, fsm.stage)
+        assertEquals(TaskStage.DONE, fsm.stage)
     }
 
     @Test

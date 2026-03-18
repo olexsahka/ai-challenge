@@ -1,21 +1,22 @@
 package com.example.myapplication
 
 import com.example.myapplication.data.repository.Constraints
+import com.example.myapplication.data.repository.ConstraintsRepository
 import org.junit.Assert.*
 import org.junit.Before
 import org.junit.Test
 
 /**
  * Tests for ConstraintsRepository logic.
- * Тестируется через TestableConstraintsRepository (без Context/SharedPreferences).
+ * После Фазы 2 ConstraintsRepository принимает KeyValueStorage — тесты используют FakeKeyValueStorage.
  */
 class ConstraintsRepositoryTest {
 
-    private lateinit var repo: TestableConstraintsRepository
+    private lateinit var repo: ConstraintsRepository
 
     @Before
     fun setup() {
-        repo = TestableConstraintsRepository()
+        repo = ConstraintsRepository(FakeKeyValueStorage())
     }
 
     // --- toContextBlock ---
@@ -69,20 +70,5 @@ class ConstraintsRepositoryTest {
         val copy = original.copy(enabled = false)
         assertEquals("no code", copy.rules)
         assertFalse(copy.enabled)
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Test infrastructure — without Context/SharedPreferences
-// ---------------------------------------------------------------------------
-
-class TestableConstraintsRepository {
-
-    var constraints: Constraints = Constraints()
-
-    fun toContextBlock(): String {
-        val c = constraints
-        if (!c.enabled || c.rules.isBlank()) return ""
-        return "Agent constraints (MUST NEVER violate):\n${c.rules.trim()}"
     }
 }

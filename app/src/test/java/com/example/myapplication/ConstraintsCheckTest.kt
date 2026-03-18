@@ -1,7 +1,7 @@
 package com.example.myapplication
 
 import com.example.myapplication.agent.TaskFsmRepository
-import com.example.myapplication.data.api.AnthropicApi
+import com.example.myapplication.domain.api.LLMApiClient
 import com.example.myapplication.data.api.model.ChatRequest
 import com.example.myapplication.data.api.model.ChatResponse
 import com.example.myapplication.data.api.model.ModelsResponse
@@ -9,7 +9,8 @@ import com.example.myapplication.data.api.model.OutputContent
 import com.example.myapplication.data.api.model.OutputItem
 import com.example.myapplication.data.api.model.UsageInfo
 import com.example.myapplication.data.db.entity.TaskFsmEntity
-import com.example.myapplication.data.db.entity.TaskStage
+import com.example.myapplication.domain.model.TaskFsmState
+import com.example.myapplication.domain.model.TaskStage
 import com.example.myapplication.data.repository.Constraints
 import com.example.myapplication.data.repository.TaskMemory
 import com.example.myapplication.agent.LLMAgent
@@ -31,27 +32,27 @@ import org.mockito.kotlin.whenever
  */
 class ConstraintsCheckTest {
 
-    private lateinit var sessionDao: FakeSessionDao
-    private lateinit var messageDao: FakeMessageDao
-    private lateinit var summaryDao: FakeSummaryDao
-    private lateinit var factDao: FakeFactDao
-    private lateinit var branchNodeDao: FakeBranchNodeDao
+    private lateinit var sessionRepo: FakeSessionRepository
+    private lateinit var messageRepo: FakeMessageRepository
+    private lateinit var summaryRepo: FakeSummaryRepository
+    private lateinit var factRepo: FakeFactRepository
+    private lateinit var branchNodeRepo: FakeBranchNodeRepository
     private lateinit var fsmDao: FakeTaskFsmDao
     private lateinit var fsmRepo: TaskFsmRepository
 
     @Before
     fun setup() {
-        sessionDao = FakeSessionDao()
-        messageDao = FakeMessageDao()
-        summaryDao = FakeSummaryDao()
-        factDao = FakeFactDao()
-        branchNodeDao = FakeBranchNodeDao()
+        sessionRepo = FakeSessionRepository()
+        messageRepo = FakeMessageRepository()
+        summaryRepo = FakeSummaryRepository()
+        factRepo = FakeFactRepository()
+        branchNodeRepo = FakeBranchNodeRepository()
         fsmDao = FakeTaskFsmDao()
         fsmRepo = TaskFsmRepository(fsmDao)
     }
 
     // Sequential API that returns responses in order
-    private class SequentialApi(private val responses: List<ChatResponse>) : AnthropicApi {
+    private class SequentialApi(private val responses: List<ChatResponse>)  : LLMApiClient {
         val requests = mutableListOf<ChatRequest>()
         private var index = 0
         override suspend fun sendMessage(request: ChatRequest): ChatResponse {
@@ -71,7 +72,7 @@ class ConstraintsCheckTest {
         "Plan:\n" + (1..stepCount).joinToString("\n") { "$it. Step $it" }
 
     private fun makeAgent(
-        api: AnthropicApi,
+        api: LLMApiClient,
         constraintRules: String = "no code generation",
         constraintsEnabled: Boolean = true
     ): LLMAgent {
@@ -84,21 +85,24 @@ class ConstraintsCheckTest {
 
         return LLMAgent(
             api = api,
-            sessionDao = sessionDao,
-            messageDao = messageDao,
+            sessionRepo = sessionRepo,
+            messageRepo = messageRepo,
             memory = makeMockMemory(),
-            summaryDao = summaryDao,
-            factDao = factDao,
-            branchNodeDao = branchNodeDao,
+            summaryRepo = summaryRepo,
+            factRepo = factRepo,
+            branchNodeRepo = branchNodeRepo,
             userProfileRepository = profile,
             taskFsmRepository = fsmRepo,
-            constraintsRepository = constraintsRepo
+            constraintsRepository = constraintsRepo,
+            clock = FakeClock(),
+            uuidGenerator = FakeUuidGenerator(),
+            dateFormatter = FakeDateFormatter()
         )
     }
 
-    private fun setupSession(): com.example.myapplication.data.db.entity.SessionEntity {
+    private fun setupSession(): com.example.myapplication.domain.model.Session {
         val session = sessionOf(id = "s1")
-        sessionDao.sessions["s1"] = session
+        sessionRepo.sessions["s1"] = session
         return session
     }
 
@@ -127,7 +131,7 @@ class ConstraintsCheckTest {
         assertEquals(2, api.requests.size)
         // FSM should be in ERROR
         val fsm = fsmRepo.get(session.id)!!
-        assertEquals(TaskStage.ERROR.name, fsm.stage)
+        assertEquals(TaskStage.ERROR, fsm.stage)
     }
 
     @Test
@@ -189,7 +193,7 @@ class ConstraintsCheckTest {
         // 3 API calls: pre-check + planning + post-check on plan
         assertEquals(3, api.requests.size)
         val fsm = fsmRepo.get(session.id)!!
-        assertEquals(TaskStage.EXECUTION.name, fsm.stage)
+        assertEquals(TaskStage.EXECUTION, fsm.stage)
     }
 
     // -------------------------------------------------------------------------
@@ -213,7 +217,7 @@ class ConstraintsCheckTest {
         assertTrue(result.isSuccess)
 
         val fsm = fsmRepo.get(session.id)!!
-        assertEquals(TaskStage.ERROR.name, fsm.stage)
+        assertEquals(TaskStage.ERROR, fsm.stage)
 
         val content = result.getOrNull()?.content ?: ""
         assertTrue(content.contains("❌ Ошибка"))
@@ -233,7 +237,7 @@ class ConstraintsCheckTest {
             expectedAction = "execute_step",
             autoRun = true
         ))
-        messageDao.messages.add(makeUserMessage(1, session.id))
+        messageRepo.messages.add(makeUserMessage(1, session.id))
 
         val api = SequentialApi(listOf(
             textResponse("Here is some code: fun main() {}"),  // step 1 result
@@ -246,7 +250,7 @@ class ConstraintsCheckTest {
         assertTrue(result.isSuccess)
 
         val fsm = fsmRepo.get(session.id)!!
-        assertEquals(TaskStage.ERROR.name, fsm.stage)
+        assertEquals(TaskStage.ERROR, fsm.stage)
         val content = result.getOrNull()?.content ?: ""
         assertTrue(content.contains("❌ Ошибка"))
     }
@@ -265,7 +269,7 @@ class ConstraintsCheckTest {
             expectedAction = "execute_step",
             autoRun = false
         ))
-        messageDao.messages.add(makeUserMessage(1, session.id))
+        messageRepo.messages.add(makeUserMessage(1, session.id))
 
         val api = SequentialApi(listOf(
             textResponse("fun hello() = println(\"hi\")"),   // step 1 result
@@ -278,7 +282,7 @@ class ConstraintsCheckTest {
         assertTrue(result.isSuccess)
 
         val fsm = fsmRepo.get(session.id)!!
-        assertEquals(TaskStage.ERROR.name, fsm.stage)
+        assertEquals(TaskStage.ERROR, fsm.stage)
     }
 
     // -------------------------------------------------------------------------
@@ -302,7 +306,7 @@ class ConstraintsCheckTest {
         // Only 1 call: planning (no constraint check)
         assertEquals(1, api.requests.size)
         val fsm = fsmRepo.get(session.id)!!
-        assertNotEquals(TaskStage.ERROR.name, fsm.stage)
+        assertNotEquals(TaskStage.ERROR, fsm.stage)
     }
 
     // -------------------------------------------------------------------------
@@ -311,25 +315,22 @@ class ConstraintsCheckTest {
 
     @Test
     fun `toInstructionsBlock without constraints has no constraint section`() {
-        val fsmRepo = makeMockTaskFsmRepository()
-        val fsm = TaskFsmEntity(sessionId = "s1")
-        val result = TaskFsmRepository(FakeTaskFsmDao()).toInstructionsBlock(fsm, null, null)
+        val fsm = TaskFsmState(sessionId = "s1")
+        val result = TaskFsmRepository(FakeTaskFsmDao()).toInstructionsBlock(fsm, null, null, false, null, false)
         assertFalse(result.contains("Agent constraints"))
     }
 
     @Test
     fun `toInstructionsBlock with disabled constraints has no constraint section`() {
-        val fsm = TaskFsmEntity(sessionId = "s1")
-        val constraints = Constraints(rules = "no code", enabled = false)
-        val result = TaskFsmRepository(FakeTaskFsmDao()).toInstructionsBlock(fsm, null, constraints)
+        val fsm = TaskFsmState(sessionId = "s1")
+        val result = TaskFsmRepository(FakeTaskFsmDao()).toInstructionsBlock(fsm, null, null, false, "no code", false)
         assertFalse(result.contains("Agent constraints"))
     }
 
     @Test
     fun `toInstructionsBlock with enabled constraints includes rules and check instructions`() {
-        val fsm = TaskFsmEntity(sessionId = "s1")
-        val constraints = Constraints(rules = "no code generation\nreply in English only", enabled = true)
-        val result = TaskFsmRepository(FakeTaskFsmDao()).toInstructionsBlock(fsm, null, constraints)
+        val fsm = TaskFsmState(sessionId = "s1")
+        val result = TaskFsmRepository(FakeTaskFsmDao()).toInstructionsBlock(fsm, null, null, false, "no code generation\nreply in English only", true)
         assertTrue(result.contains("Agent constraints (MUST NEVER violate):"))
         assertTrue(result.contains("no code generation"))
         assertTrue(result.contains("reply in English only"))
@@ -340,9 +341,8 @@ class ConstraintsCheckTest {
 
     @Test
     fun `toInstructionsBlock with constraints appears before FSM state`() {
-        val fsm = TaskFsmEntity(sessionId = "s1")
-        val constraints = Constraints(rules = "no jargon", enabled = true)
-        val result = TaskFsmRepository(FakeTaskFsmDao()).toInstructionsBlock(fsm, null, constraints)
+        val fsm = TaskFsmState(sessionId = "s1")
+        val result = TaskFsmRepository(FakeTaskFsmDao()).toInstructionsBlock(fsm, null, null, false, "no jargon", true)
         val constraintIdx = result.indexOf("Agent constraints")
         val stateIdx = result.indexOf("Current task state:")
         assertTrue(constraintIdx < stateIdx)

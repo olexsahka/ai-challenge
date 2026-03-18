@@ -2,24 +2,62 @@ package com.example.myapplication.agent
 
 import com.example.myapplication.data.db.dao.TaskFsmDao
 import com.example.myapplication.data.db.entity.TaskFsmEntity
-import com.example.myapplication.data.db.entity.TaskStage
-import com.example.myapplication.data.repository.Constraints
-import com.example.myapplication.data.repository.TaskMemory
+import com.example.myapplication.data.db.entity.TaskStage as EntityTaskStage
+import com.example.myapplication.domain.model.TaskFsmState
+import com.example.myapplication.domain.model.TaskStage
+import com.example.myapplication.domain.repository.TaskFsmRepository as TaskFsmRepositoryInterface
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.map
 
-class TaskFsmRepository(private val dao: TaskFsmDao) {
+// Mapping functions between Room entity and domain model
+private fun TaskFsmEntity.toDomain(): TaskFsmState = TaskFsmState(
+    sessionId = sessionId,
+    stage = runCatching { TaskStage.valueOf(stage) }.getOrDefault(TaskStage.PLANNING),
+    step = step,
+    stepCount = stepCount,
+    expectedAction = expectedAction,
+    paused = paused,
+    autoRun = autoRun,
+    savedStage = savedStage?.let { runCatching { TaskStage.valueOf(it) }.getOrNull() },
+    savedStep = savedStep,
+    savedExpectedAction = savedExpectedAction
+)
 
-    fun observe(sessionId: String): Flow<TaskFsmEntity?> = dao.observeBySession(sessionId)
+private fun TaskFsmState.toEntity(): TaskFsmEntity = TaskFsmEntity(
+    sessionId = sessionId,
+    stage = stage.name,
+    step = step,
+    stepCount = stepCount,
+    expectedAction = expectedAction,
+    paused = paused,
+    autoRun = autoRun,
+    savedStage = savedStage?.name,
+    savedStep = savedStep,
+    savedExpectedAction = savedExpectedAction
+)
 
-    suspend fun upsert(entity: TaskFsmEntity) = dao.upsert(entity)
+class TaskFsmRepository(private val dao: TaskFsmDao) : TaskFsmRepositoryInterface {
 
-    suspend fun get(sessionId: String): TaskFsmEntity? = dao.getBySession(sessionId)
+    override fun observe(sessionId: String): Flow<TaskFsmState?> =
+        dao.observeBySession(sessionId).map { it?.toDomain() }
 
-    suspend fun getOrCreate(sessionId: String): TaskFsmEntity {
-        return dao.getBySession(sessionId) ?: TaskFsmEntity(sessionId = sessionId).also { dao.upsert(it) }
+    override suspend fun upsert(state: TaskFsmState) = dao.upsert(state.toEntity())
+
+    override suspend fun get(sessionId: String): TaskFsmState? =
+        dao.getBySession(sessionId)?.toDomain()
+
+    override suspend fun getOrCreate(sessionId: String): TaskFsmState {
+        return dao.getBySession(sessionId)?.toDomain()
+            ?: TaskFsmState(sessionId = sessionId).also { dao.upsert(it.toEntity()) }
     }
 
-    suspend fun transitionTo(sessionId: String, stage: TaskStage, step: Int, expectedAction: String, stepCount: Int? = null) {
+    override suspend fun transitionTo(
+        sessionId: String,
+        stage: TaskStage,
+        step: Int,
+        expectedAction: String,
+        stepCount: Int?
+    ) {
         val current = dao.getBySession(sessionId) ?: TaskFsmEntity(sessionId = sessionId)
         dao.upsert(current.copy(
             stage = stage.name,
@@ -29,82 +67,81 @@ class TaskFsmRepository(private val dao: TaskFsmDao) {
         ))
     }
 
-    suspend fun markDone(sessionId: String) {
+    override suspend fun markDone(sessionId: String) {
         val current = dao.getBySession(sessionId) ?: return
         dao.upsert(current.copy(stage = TaskStage.DONE.name, expectedAction = "finalize"))
     }
 
-    suspend fun validationFailed(sessionId: String) {
+    override suspend fun validationFailed(sessionId: String) {
         val current = dao.getBySession(sessionId) ?: return
         dao.upsert(current.copy(stage = TaskStage.EXECUTION.name, expectedAction = "execute_step"))
     }
 
-    suspend fun pause(sessionId: String) {
+    override suspend fun pause(sessionId: String) {
         val current = dao.getBySession(sessionId) ?: return
         if (current.paused) return
-        dao.upsert(
-            current.copy(
-                paused = true,
-                autoRun = false,
-                savedStage = current.stage,
-                savedStep = current.step,
-                savedExpectedAction = current.expectedAction,
-                expectedAction = "wait"
-            )
-        )
+        dao.upsert(current.copy(
+            paused = true,
+            autoRun = false,
+            savedStage = current.stage,
+            savedStep = current.step,
+            savedExpectedAction = current.expectedAction,
+            expectedAction = "wait"
+        ))
     }
 
-    suspend fun resume(sessionId: String) {
+    override suspend fun resume(sessionId: String) {
         val current = dao.getBySession(sessionId) ?: return
         if (!current.paused) return
-        dao.upsert(
-            current.copy(
-                paused = false,
-                stage = current.savedStage ?: current.stage,
-                step = current.savedStep ?: current.step,
-                expectedAction = current.savedExpectedAction ?: current.expectedAction,
-                savedStage = null,
-                savedStep = null,
-                savedExpectedAction = null
-            )
-        )
+        dao.upsert(current.copy(
+            paused = false,
+            stage = current.savedStage ?: current.stage,
+            step = current.savedStep ?: current.step,
+            expectedAction = current.savedExpectedAction ?: current.expectedAction,
+            savedStage = null,
+            savedStep = null,
+            savedExpectedAction = null
+        ))
     }
 
-    suspend fun enableAutoRun(sessionId: String) {
+    override suspend fun enableAutoRun(sessionId: String) {
         val current = dao.getBySession(sessionId) ?: TaskFsmEntity(sessionId = sessionId)
         dao.upsert(current.copy(autoRun = true, paused = false))
     }
 
-    suspend fun disableAutoRun(sessionId: String) {
+    override suspend fun disableAutoRun(sessionId: String) {
         val current = dao.getBySession(sessionId) ?: return
         dao.upsert(current.copy(autoRun = false))
     }
 
-    suspend fun reset(sessionId: String) {
+    override suspend fun reset(sessionId: String) {
         dao.upsert(TaskFsmEntity(sessionId = sessionId))
     }
 
-    suspend fun deleteBySession(sessionId: String) = dao.deleteBySession(sessionId)
+    override suspend fun deleteBySession(sessionId: String) = dao.deleteBySession(sessionId)
 
-    suspend fun setError(sessionId: String) {
+    override suspend fun setError(sessionId: String) {
         val current = dao.getBySession(sessionId) ?: return
         dao.upsert(current.copy(stage = TaskStage.ERROR.name, autoRun = false, expectedAction = "retry"))
     }
 
-    fun toInstructionsBlock(
-        fsm: TaskFsmEntity,
-        taskMemory: TaskMemory? = null,
-        constraints: Constraints? = null
+    override fun toInstructionsBlock(
+        fsm: TaskFsmState,
+        taskMemoryName: String?,
+        taskMemoryDescription: String?,
+        taskMemoryEnabled: Boolean,
+        constraintsRules: String?,
+        constraintsEnabled: Boolean
     ): String {
         val sb = StringBuilder()
-        if (taskMemory != null && taskMemory.enabled) {
-            if (taskMemory.name.isNotBlank()) sb.appendLine("Task: ${taskMemory.name.trim()}")
-            if (taskMemory.description.isNotBlank()) sb.appendLine("Description: ${taskMemory.description.trim()}")
+        if (taskMemoryEnabled) {
+            if (!taskMemoryName.isNullOrBlank()) sb.appendLine("Task: ${taskMemoryName.trim()}")
+            if (!taskMemoryDescription.isNullOrBlank()) sb.appendLine("Description: ${taskMemoryDescription.trim()}")
             sb.appendLine()
         }
-        if (constraints != null && constraints.enabled && constraints.rules.isNotBlank()) {
+        if (constraintsEnabled && !constraintsRules.isNullOrBlank()) {
             sb.appendLine("Agent constraints (MUST NEVER violate):")
-            sb.appendLine(constraints.rules.trim())
+            sb.appendLine(constraintsRules.trim())
             sb.appendLine()
             sb.appendLine("Constraint check rules:")
             sb.appendLine("- Before every action: verify it does not violate any constraint above.")
@@ -116,7 +153,7 @@ class TaskFsmRepository(private val dao: TaskFsmDao) {
         }
         sb.append("""
 Current task state:
-  stage: ${fsm.stage.lowercase()}
+  stage: ${fsm.stage.name.lowercase()}
   step: ${fsm.step}
   expected_action: ${fsm.expectedAction}
   paused: ${fsm.paused}

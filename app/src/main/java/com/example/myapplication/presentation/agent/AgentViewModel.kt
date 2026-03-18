@@ -14,14 +14,14 @@ import com.example.myapplication.data.repository.ConstraintsRepository
 import com.example.myapplication.data.repository.TaskMemory
 import com.example.myapplication.data.repository.UserInformation
 import com.example.myapplication.data.repository.UserProfileRepository
-import com.example.myapplication.data.db.entity.BranchNodeEntity
-import com.example.myapplication.data.db.entity.FactEntity
 import com.example.myapplication.data.db.entity.MemoryStrategy
-import com.example.myapplication.data.db.entity.SessionContextConfig
-import com.example.myapplication.data.db.entity.SessionEntity
-import com.example.myapplication.data.db.entity.SummaryEntity
-import com.example.myapplication.data.db.entity.TaskFsmEntity
+import com.example.myapplication.domain.model.BranchNode
+import com.example.myapplication.domain.model.FactData
 import com.example.myapplication.domain.model.Message
+import com.example.myapplication.domain.model.Session
+import com.example.myapplication.domain.model.SessionContextConfig
+import com.example.myapplication.domain.model.TaskFsmState
+import com.example.myapplication.domain.model.SummaryData
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -36,19 +36,19 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.Job
 
 data class AgentUiState(
-    val sessions: List<SessionEntity> = emptyList(),
-    val activeSession: SessionEntity? = null,
+    val sessions: List<Session> = emptyList(),
+    val activeSession: Session? = null,
     val isLoading: Boolean = false,
     val error: String? = null,
     val memories: List<MemoryEntry> = emptyList(),
     val showSettings: Boolean = false,
-    val activeSummary: SummaryEntity? = null,
-    val activeFacts: List<FactEntity> = emptyList(),
-    val branchNodes: List<BranchNodeEntity> = emptyList(),
+    val activeSummary: SummaryData? = null,
+    val activeFacts: List<FactData> = emptyList(),
+    val branchNodes: List<BranchNode> = emptyList(),
     val activeNodeId: String? = null,
     val userInformation: UserInformation = UserInformation(),
     val taskMemory: TaskMemory = TaskMemory(),
-    val taskFsmState: TaskFsmEntity? = null,
+    val taskFsmState: TaskFsmState? = null,
     val constraints: Constraints = Constraints(),
     val vkusVillEnabled: Boolean = false,
     val mcpStatus: McpConnectionStatus = McpConnectionStatus.Disconnected,
@@ -109,7 +109,7 @@ class AgentViewModel(
         }
     }
 
-    fun selectSession(session: SessionEntity) {
+    fun selectSession(session: Session) {
         agentRunner.resetHistory()
         activateSession(session)
     }
@@ -159,7 +159,7 @@ class AgentViewModel(
         }
     }
 
-    fun selectBranchNode(node: BranchNodeEntity) {
+    fun selectBranchNode(node: BranchNode) {
         _activeNodeId.value = node.id
         _uiState.update { it.copy(activeNodeId = node.id) }
     }
@@ -217,7 +217,7 @@ class AgentViewModel(
 
     fun clearError() = _uiState.update { it.copy(error = null) }
 
-    private fun activateSession(session: SessionEntity) {
+    private fun activateSession(session: Session) {
         _activeSessionId.value = session.id
         _activeNodeId.value = null
         _uiState.update { it.copy(activeSession = session, activeSummary = null, activeFacts = emptyList(), branchNodes = emptyList(), activeNodeId = null) }

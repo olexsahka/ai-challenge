@@ -4,7 +4,9 @@ import com.example.myapplication.agent.AgentMemory
 import com.example.myapplication.agent.AgentRunner
 import com.example.myapplication.agent.LLMAgent
 import com.example.myapplication.agent.TaskFsmRepository
-import com.example.myapplication.data.api.AnthropicApi
+import com.example.myapplication.domain.repository.TaskFsmRepository as TaskFsmRepositoryInterface
+import com.example.myapplication.data.api.KtorLLMApiClient
+import com.example.myapplication.data.api.createHttpClient
 import com.example.myapplication.data.mcp.McpClient
 import com.example.myapplication.data.mcp.McpRepository
 import com.example.myapplication.data.mcp.TelegramMcpClient
@@ -15,58 +17,58 @@ import com.example.myapplication.data.repository.SettingsRepository
 import com.example.myapplication.data.repository.SettingsRepositoryImpl
 import com.example.myapplication.data.repository.ConstraintsRepository
 import com.example.myapplication.data.repository.UserProfileRepository
+import com.example.myapplication.data.repository.room.RoomBranchNodeRepository
+import com.example.myapplication.data.repository.room.RoomFactRepository
+import com.example.myapplication.data.repository.room.RoomMessageRepository
+import com.example.myapplication.data.repository.room.RoomSessionRepository
+import com.example.myapplication.data.repository.room.RoomSummaryRepository
+import com.example.myapplication.domain.api.LLMApiClient
+import com.example.myapplication.domain.repository.BranchNodeRepository
 import com.example.myapplication.domain.repository.ChatRepository
+import com.example.myapplication.domain.repository.FactRepository
+import com.example.myapplication.domain.repository.MessageRepository
+import com.example.myapplication.domain.repository.SessionRepository
+import com.example.myapplication.domain.repository.SummaryRepository
 import com.example.myapplication.domain.usecase.SendMessageUseCase
+import com.example.myapplication.platform.Clock
+import com.example.myapplication.platform.DateFormatter
+import com.example.myapplication.platform.KeyValueStorage
+import com.example.myapplication.platform.UuidGenerator
+import com.example.myapplication.platform.android.AndroidClock
+import com.example.myapplication.platform.android.AndroidDateFormatter
+import com.example.myapplication.platform.android.AndroidUuidGenerator
+import com.example.myapplication.platform.android.SharedPrefsKeyValueStorage
 import com.example.myapplication.presentation.agent.AgentViewModel
 import com.example.myapplication.presentation.chat.ChatViewModel
 import okhttp3.OkHttpClient
-import okhttp3.logging.HttpLoggingInterceptor
 import java.util.concurrent.TimeUnit
 import org.koin.android.ext.koin.androidContext
 import org.koin.androidx.viewmodel.dsl.viewModel
+import org.koin.core.qualifier.named
+import com.example.myapplication.BuildConfig
 import org.koin.dsl.module
-import retrofit2.Retrofit
-import retrofit2.converter.gson.GsonConverterFactory
 
-private const val BASE_URL = "https://api.proxyapi.ru/openai/v1/"
-private const val API_KEY = "sk-R6pPAIxxB5hBJx0IBBAuxX0w5WQzpRVk"
+private const val BASE_URL = "https://api.proxyapi.ru/openai/v1"
 
 val appModule = module {
 
-    single {
-        OkHttpClient.Builder()
-            .connectTimeout(120, TimeUnit.SECONDS)
-            .readTimeout(120, TimeUnit.SECONDS)
-            .writeTimeout(120, TimeUnit.SECONDS)
-            .addInterceptor(
-                HttpLoggingInterceptor().apply {
-                    level = HttpLoggingInterceptor.Level.BODY
-                }
-            )
-            .addInterceptor { chain ->
-                val request = chain.request().newBuilder()
-                    .addHeader("Authorization", "Bearer $API_KEY")
-                    .addHeader("Content-Type", "application/json")
-                    .build()
-                chain.proceed(request)
-            }
-            .build()
-    }
-    single {
-        Retrofit.Builder()
-            .baseUrl(BASE_URL)
-            .client(get())
-            .addConverterFactory(GsonConverterFactory.create())
-            .build()
-    }
-
-    single<AnthropicApi> { get<Retrofit>().create(AnthropicApi::class.java) }
+    // Ktor HTTP client for LLM API
+    single { createHttpClient() }
+    single<LLMApiClient> { KtorLLMApiClient(get(), BASE_URL, BuildConfig.PROXY_API_KEY) }
 
     single<ChatRepository> { ChatRepositoryImpl(get()) }
 
     single<SettingsRepository> { SettingsRepositoryImpl(androidContext()) }
 
     factory { SendMessageUseCase(get()) }
+
+    // Platform implementations
+    single<Clock> { AndroidClock() }
+    single<UuidGenerator> { AndroidUuidGenerator() }
+    single<DateFormatter> { AndroidDateFormatter() }
+    single<KeyValueStorage>(named("memory")) { SharedPrefsKeyValueStorage(androidContext(), "agent_memory") }
+    single<KeyValueStorage>(named("profile")) { SharedPrefsKeyValueStorage(androidContext(), "user_profile") }
+    single<KeyValueStorage>(named("constraints")) { SharedPrefsKeyValueStorage(androidContext(), "agent_constraints") }
 
     single { AppDatabase.create(androidContext()) }
     single { get<AppDatabase>().sessionDao() }
@@ -75,23 +77,33 @@ val appModule = module {
     single { get<AppDatabase>().factDao() }
     single { get<AppDatabase>().branchNodeDao() }
     single { get<AppDatabase>().taskFsmDao() }
-    single { AgentMemory(androidContext()) }
-    single { UserProfileRepository(androidContext()) }
-    single { ConstraintsRepository(androidContext()) }
-    single { TaskFsmRepository(get()) }
-    single { LLMAgent(get(), get(), get(), get(), get(), get(), get(), get(), get(), get()) }
-    single { McpClient(get()) }
-    single { McpRepository(androidContext(), get()) }
-    single(qualifier = org.koin.core.qualifier.named("plain")) {
+
+    // Domain repository implementations
+    single<SessionRepository> { RoomSessionRepository(get()) }
+    single<MessageRepository> { RoomMessageRepository(get()) }
+    single<SummaryRepository> { RoomSummaryRepository(get()) }
+    single<FactRepository> { RoomFactRepository(get()) }
+    single<BranchNodeRepository> { RoomBranchNodeRepository(get()) }
+
+    single { AgentMemory(get(named("memory"))) }
+    single { UserProfileRepository(get(named("profile"))) }
+    single { ConstraintsRepository(get(named("constraints"))) }
+    single<TaskFsmRepositoryInterface> { TaskFsmRepository(get()) }
+    single { LLMAgent(get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get()) }
+
+    // OkHttp client for MCP servers (plain, no auth interceptor)
+    single(qualifier = named("plain")) {
         OkHttpClient.Builder()
             .connectTimeout(30, TimeUnit.SECONDS)
             .readTimeout(30, TimeUnit.SECONDS)
             .writeTimeout(30, TimeUnit.SECONDS)
             .build()
     }
-    single { TelegramMcpClient(get(qualifier = org.koin.core.qualifier.named("plain"))) }
+    single { McpClient(get(qualifier = named("plain"))) }
+    single { McpRepository(androidContext(), get()) }
+    single { TelegramMcpClient(get(qualifier = named("plain"))) }
     single { TelegramMcpRepository(androidContext(), get(), com.example.myapplication.BuildConfig.TELEGRAM_MCP_PASSWORD) }
-    single { AgentRunner(get(), get(), get<McpRepository>(), get<TelegramMcpRepository>()) }
+    single { AgentRunner(get<LLMApiClient>(), get(), get<McpRepository>(), get<TelegramMcpRepository>()) }
 
     viewModel { ChatViewModel(get(), get(), get(), get()) }
     viewModel { AgentViewModel(get(), get(), get(), get(), get(), get()) }
