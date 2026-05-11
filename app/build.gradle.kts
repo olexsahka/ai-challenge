@@ -25,6 +25,7 @@ android {
         }
         buildConfigField("String", "TELEGRAM_MCP_PASSWORD", "\"${localProps.getProperty("TELEGRAM_MCP_PASSWORD", "")}\"")
         buildConfigField("String", "PROXY_API_KEY", "\"${localProps.getProperty("PROXY_API_KEY", "")}\"")
+        buildConfigField("String", "CRYPTO_MCP_API_KEY", "\"${localProps.getProperty("CRYPTO_MCP_API_KEY", "")}\"")
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {
@@ -90,6 +91,10 @@ dependencies {
     implementation(libs.room.runtime)
     implementation(libs.room.ktx)
     ksp(libs.room.compiler)
+
+    // OkHttp + SSE
+    implementation(libs.okhttp)
+    implementation(libs.okhttp.sse)
 
     // MCP SDK + Ktor
     implementation(libs.mcp.kotlin.sdk) {

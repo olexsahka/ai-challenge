@@ -61,6 +61,7 @@ import androidx.compose.material3.VerticalDivider
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import com.example.myapplication.service.ReminderForegroundService
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -114,6 +115,12 @@ fun AgentScreen(modifier: Modifier = Modifier, viewModel: AgentViewModel = koinV
     val messages by viewModel.messages.collectAsState()
     val snackbarHostState = remember { SnackbarHostState() }
     var inputText by remember { mutableStateOf("") }
+    val context = androidx.compose.ui.platform.LocalContext.current
+
+    LaunchedEffect(uiState.reminderEnabled) {
+        if (uiState.reminderEnabled) ReminderForegroundService.start(context)
+        else ReminderForegroundService.stop(context)
+    }
 
     LaunchedEffect(uiState.error) {
         uiState.error?.let {
@@ -135,12 +142,15 @@ fun AgentScreen(modifier: Modifier = Modifier, viewModel: AgentViewModel = koinV
                 mcpStatus = uiState.mcpStatus,
                 telegramEnabled = uiState.telegramEnabled,
                 telegramMcpStatus = uiState.telegramMcpStatus,
+                reminderEnabled = uiState.reminderEnabled,
+                reminderStatus = uiState.reminderStatus,
                 onSave = { config -> viewModel.saveSessionContext(config) },
                 onSaveUserInformation = { viewModel.saveUserInformation(it) },
                 onSaveTaskMemory = { viewModel.saveTaskMemory(it) },
                 onSaveConstraints = { viewModel.saveConstraints(it) },
                 onToggleVkusVill = { viewModel.toggleVkusVill(it) },
                 onToggleTelegram = { viewModel.toggleTelegram(it) },
+                onToggleReminder = { viewModel.toggleReminder(context, it) },
                 onForgetMemory = { viewModel.forgetMemory(it) },
                 onForgetAll = { viewModel.forgetAllMemory() },
                 onDismiss = { viewModel.hideSettings() }
@@ -335,12 +345,15 @@ private fun ContextSettingsSheet(
     mcpStatus: McpConnectionStatus,
     telegramEnabled: Boolean,
     telegramMcpStatus: McpConnectionStatus,
+    reminderEnabled: Boolean,
+    reminderStatus: McpConnectionStatus,
     onSave: (SessionContextConfig) -> Unit,
     onSaveUserInformation: (UserInformation) -> Unit,
     onSaveTaskMemory: (TaskMemory) -> Unit,
     onSaveConstraints: (Constraints) -> Unit,
     onToggleVkusVill: (Boolean) -> Unit,
     onToggleTelegram: (Boolean) -> Unit,
+    onToggleReminder: (Boolean) -> Unit,
     onForgetMemory: (String) -> Unit,
     onForgetAll: () -> Unit,
     onDismiss: () -> Unit
@@ -367,7 +380,6 @@ private fun ContextSettingsSheet(
     var taskEnabledState by rememberSaveable { mutableStateOf(taskMemory.enabled) }
     var constraintsRulesText by rememberSaveable { mutableStateOf(constraints.rules) }
     var constraintsEnabledState by rememberSaveable { mutableStateOf(constraints.enabled) }
-
     val sheetState = rememberModalBottomSheetState()
 
     ModalBottomSheet(onDismissRequest = onDismiss, sheetState = sheetState) {
@@ -729,6 +741,64 @@ private fun ContextSettingsSheet(
                 if (telegramMcpStatus is McpConnectionStatus.Connected && telegramMcpStatus.tools.isNotEmpty()) {
                     Spacer(Modifier.height(8.dp))
                     telegramMcpStatus.tools.forEach { tool ->
+                        Row(
+                            Modifier
+                                .fillMaxWidth()
+                                .padding(vertical = 2.dp),
+                            verticalAlignment = Alignment.Top
+                        ) {
+                            Text(
+                                "• ${tool.name}",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.width(180.dp)
+                            )
+                            Text(
+                                tool.description,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
+                                modifier = Modifier.weight(1f)
+                            )
+                        }
+                    }
+                }
+
+                // Crypto Reminders SSE
+                Spacer(Modifier.height(12.dp))
+                Row(
+                    Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Column(Modifier.weight(1f)) {
+                        Text("Crypto Reminders (SSE)", style = MaterialTheme.typography.bodyMedium)
+                        val reminderStatusText = when (reminderStatus) {
+                            is McpConnectionStatus.Disconnected -> if (reminderEnabled) "" else "Отключён"
+                            is McpConnectionStatus.Connecting -> "Подключение..."
+                            is McpConnectionStatus.Connected -> "Подключён · ${reminderStatus.tools.size} инструментов"
+                            is McpConnectionStatus.Error -> "Ошибка: ${reminderStatus.message}"
+                        }
+                        val reminderStatusColor = when (reminderStatus) {
+                            is McpConnectionStatus.Connected -> MaterialTheme.colorScheme.primary
+                            is McpConnectionStatus.Error -> MaterialTheme.colorScheme.error
+                            else -> MaterialTheme.colorScheme.onSurfaceVariant
+                        }
+                        if (reminderStatusText.isNotEmpty()) {
+                            Text(
+                                reminderStatusText,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = reminderStatusColor
+                            )
+                        }
+                    }
+                    Switch(
+                        checked = reminderEnabled,
+                        onCheckedChange = { onToggleReminder(it) }
+                    )
+                }
+                if (reminderStatus is McpConnectionStatus.Connected && reminderStatus.tools.isNotEmpty()) {
+                    Spacer(Modifier.height(8.dp))
+                    reminderStatus.tools.forEach { tool ->
                         Row(
                             Modifier
                                 .fillMaxWidth()

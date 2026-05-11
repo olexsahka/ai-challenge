@@ -11,6 +11,10 @@ import com.example.myapplication.data.mcp.McpClient
 import com.example.myapplication.data.mcp.McpRepository
 import com.example.myapplication.data.mcp.TelegramMcpClient
 import com.example.myapplication.data.mcp.TelegramMcpRepository
+import com.example.myapplication.data.api.createSseHttpClient
+import com.example.myapplication.data.reminder.CryptoMcpRepository
+import com.example.myapplication.data.reminder.ReminderManager
+import com.example.myapplication.data.reminder.ReminderSseRepository
 import com.example.myapplication.data.db.AppDatabase
 import com.example.myapplication.data.repository.ChatRepositoryImpl
 import com.example.myapplication.data.repository.SettingsRepository
@@ -103,8 +107,14 @@ val appModule = module {
     single { McpRepository(androidContext(), get()) }
     single { TelegramMcpClient(get(qualifier = named("plain"))) }
     single { TelegramMcpRepository(androidContext(), get(), com.example.myapplication.BuildConfig.TELEGRAM_MCP_PASSWORD) }
-    single { AgentRunner(get<LLMApiClient>(), get(), get<McpRepository>(), get<TelegramMcpRepository>()) }
+    // Reminder SSE
+    single(qualifier = named("sse")) { createSseHttpClient() }
+    single { ReminderSseRepository(get(qualifier = named("sse"))) }
+    single { ReminderManager(androidContext(), get(), get(qualifier = named("plain"))) }
+    single { CryptoMcpRepository(androidContext(), get(qualifier = named("plain"))) }
+
+    single { AgentRunner(get<LLMApiClient>(), get(), get<McpRepository>(), get<TelegramMcpRepository>(), get<CryptoMcpRepository>()) }
 
     viewModel { ChatViewModel(get(), get(), get(), get()) }
-    viewModel { AgentViewModel(get(), get(), get(), get(), get(), get()) }
+    viewModel { AgentViewModel(get(), get(), get(), get(), get(), get(), get<ReminderManager>(), get<CryptoMcpRepository>()) }
 }

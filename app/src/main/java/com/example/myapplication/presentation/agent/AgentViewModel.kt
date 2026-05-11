@@ -1,5 +1,6 @@
 package com.example.myapplication.presentation.agent
 
+import android.content.Context
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.myapplication.agent.AgentRunner
@@ -9,11 +10,15 @@ import com.example.myapplication.agent.MemoryEntry
 import com.example.myapplication.data.mcp.McpConnectionStatus
 import com.example.myapplication.data.mcp.McpRepository
 import com.example.myapplication.data.mcp.TelegramMcpRepository
+import com.example.myapplication.data.reminder.CryptoMcpRepository
+import com.example.myapplication.data.reminder.ReminderEvent
+import com.example.myapplication.data.reminder.ReminderManager
 import com.example.myapplication.data.repository.Constraints
 import com.example.myapplication.data.repository.ConstraintsRepository
 import com.example.myapplication.data.repository.TaskMemory
 import com.example.myapplication.data.repository.UserInformation
 import com.example.myapplication.data.repository.UserProfileRepository
+import com.example.myapplication.service.ReminderForegroundService
 import com.example.myapplication.data.db.entity.MemoryStrategy
 import com.example.myapplication.domain.model.BranchNode
 import com.example.myapplication.domain.model.FactData
@@ -53,7 +58,9 @@ data class AgentUiState(
     val vkusVillEnabled: Boolean = false,
     val mcpStatus: McpConnectionStatus = McpConnectionStatus.Disconnected,
     val telegramEnabled: Boolean = false,
-    val telegramMcpStatus: McpConnectionStatus = McpConnectionStatus.Disconnected
+    val telegramMcpStatus: McpConnectionStatus = McpConnectionStatus.Disconnected,
+    val reminderEnabled: Boolean = false,
+    val reminderStatus: McpConnectionStatus = McpConnectionStatus.Disconnected
 )
 
 class AgentViewModel(
@@ -62,7 +69,9 @@ class AgentViewModel(
     private val constraintsRepository: ConstraintsRepository,
     private val mcpRepository: McpRepository,
     private val agentRunner: AgentRunner,
-    private val telegramMcpRepository: TelegramMcpRepository
+    private val telegramMcpRepository: TelegramMcpRepository,
+    private val reminderRepository: ReminderManager,
+    private val cryptoMcpRepository: CryptoMcpRepository
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(AgentUiState())
@@ -99,6 +108,8 @@ class AgentViewModel(
         refreshConstraints()
         refreshMcpState()
         refreshTelegramMcpState()
+        refreshReminderState()
+        observeReminderEvents()
     }
 
     fun newSession() {
@@ -387,6 +398,55 @@ class AgentViewModel(
         } else {
             mcpRepository.disconnect()
             _uiState.update { it.copy(vkusVillEnabled = false, mcpStatus = McpConnectionStatus.Disconnected) }
+        }
+    }
+
+    fun toggleReminder(context: Context, enabled: Boolean) {
+        cryptoMcpRepository.cryptoEnabled = enabled
+        reminderRepository.isEnabled = enabled
+        if (enabled) {
+            _uiState.update { it.copy(reminderEnabled = true, reminderStatus = McpConnectionStatus.Connecting) }
+            viewModelScope.launch {
+                val status = cryptoMcpRepository.connect()
+                _uiState.update { it.copy(reminderStatus = status) }
+            }
+            ReminderForegroundService.start(context)
+        } else {
+            cryptoMcpRepository.disconnect()
+            ReminderForegroundService.stop(context)
+            _uiState.update { it.copy(reminderEnabled = false, reminderStatus = McpConnectionStatus.Disconnected) }
+        }
+    }
+
+    private fun refreshReminderState() {
+        val enabled = cryptoMcpRepository.cryptoEnabled
+        reminderRepository.isEnabled = enabled
+        _uiState.update { it.copy(reminderEnabled = enabled) }
+        if (enabled) {
+            _uiState.update { it.copy(reminderStatus = McpConnectionStatus.Connecting) }
+            viewModelScope.launch {
+                val status = cryptoMcpRepository.connect()
+                _uiState.update { it.copy(reminderStatus = status) }
+            }
+        }
+    }
+
+    private fun observeReminderEvents() {
+        viewModelScope.launch {
+            reminderRepository.reminderEvents.collect { event ->
+                val sessionId = _uiState.value.activeSession?.id ?: return@collect
+                val nodeId = _uiState.value.activeNodeId
+                val text = formatReminderMessage(event)
+                agent.saveAssistantMessage(sessionId, text, nodeId)
+            }
+        }
+    }
+
+    private fun formatReminderMessage(event: ReminderEvent): String {
+        return buildString {
+            append("🔔 **${event.symbol}** — ${event.type}\n")
+            append(event.message)
+            if (event.price.isNotEmpty()) append("\nЦена: ${event.price}")
         }
     }
 }

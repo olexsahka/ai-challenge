@@ -291,7 +291,16 @@ class AgentRunner(
         for (line in lines) {
             when {
                 line.startsWith("THOUGHT:") -> thought = line.removePrefix("THOUGHT:").trim()
-                line.startsWith("ACTION:") -> action = line.removePrefix("ACTION:").trim()
+                line.startsWith("ACTION:") -> {
+                    val raw = line.removePrefix("ACTION:").trim()
+                    val colonIdx = raw.indexOf(':')
+                    if (colonIdx > 0) {
+                        action = raw.substring(0, colonIdx).trim()
+                        if (input == null) input = raw.substring(colonIdx + 1).trim()
+                    } else {
+                        action = raw
+                    }
+                }
                 line.startsWith("INPUT:") -> input = line.removePrefix("INPUT:").trim()
             }
         }
