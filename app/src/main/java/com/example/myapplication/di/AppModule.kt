@@ -11,6 +11,8 @@ import com.example.myapplication.data.mcp.McpClient
 import com.example.myapplication.data.mcp.McpRepository
 import com.example.myapplication.data.mcp.TelegramMcpClient
 import com.example.myapplication.data.mcp.TelegramMcpRepository
+import com.example.myapplication.data.mcp.StatelessMcpClient
+import com.example.myapplication.data.mcp.StatelessMcpRepository
 import com.example.myapplication.data.api.createSseHttpClient
 import com.example.myapplication.data.reminder.CryptoMcpRepository
 import com.example.myapplication.data.reminder.ReminderManager
@@ -113,8 +115,25 @@ val appModule = module {
     single { ReminderManager(androidContext(), get(), get(qualifier = named("plain"))) }
     single { CryptoMcpRepository(androidContext(), get(qualifier = named("plain"))) }
 
-    single { AgentRunner(get<LLMApiClient>(), get(), get<McpRepository>(), get<TelegramMcpRepository>(), get<CryptoMcpRepository>()) }
+    // Task MCP servers (composition demo: search → summarize → save)
+    single(named("taskSearch"))    { StatelessMcpClient(get(qualifier = named("plain")), "http://10.0.2.2:8081/mcp") }
+    single(named("taskSummarize")) { StatelessMcpClient(get(qualifier = named("plain")), "http://10.0.2.2:8082/mcp") }
+    single(named("taskSave"))      { StatelessMcpClient(get(qualifier = named("plain")), "http://10.0.2.2:8083/mcp") }
+    single(named("taskSearch"))    { StatelessMcpRepository(androidContext(), get(named("taskSearch")), "task_search_enabled") }
+    single(named("taskSummarize")) { StatelessMcpRepository(androidContext(), get(named("taskSummarize")), "task_summarize_enabled") }
+    single(named("taskSave"))      { StatelessMcpRepository(androidContext(), get(named("taskSave")), "task_save_enabled") }
+
+    single { AgentRunner(
+        get<LLMApiClient>(),
+        get(),
+        get<McpRepository>(),
+        get<TelegramMcpRepository>(),
+        get<CryptoMcpRepository>(),
+        get<StatelessMcpRepository>(named("taskSearch")),
+        get<StatelessMcpRepository>(named("taskSummarize")),
+        get<StatelessMcpRepository>(named("taskSave"))
+    ) }
 
     viewModel { ChatViewModel(get(), get(), get(), get()) }
-    viewModel { AgentViewModel(get(), get(), get(), get(), get(), get(), get<ReminderManager>(), get<CryptoMcpRepository>()) }
+    viewModel { AgentViewModel(get(), get(), get(), get(), get(), get(), get<ReminderManager>(), get<CryptoMcpRepository>(), get<StatelessMcpRepository>(named("taskSearch")), get<StatelessMcpRepository>(named("taskSummarize")), get<StatelessMcpRepository>(named("taskSave"))) }
 }

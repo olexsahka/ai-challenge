@@ -9,6 +9,7 @@ import com.example.myapplication.agent.LLMAgent
 import com.example.myapplication.agent.MemoryEntry
 import com.example.myapplication.data.mcp.McpConnectionStatus
 import com.example.myapplication.data.mcp.McpRepository
+import com.example.myapplication.data.mcp.StatelessMcpRepository
 import com.example.myapplication.data.mcp.TelegramMcpRepository
 import com.example.myapplication.data.reminder.CryptoMcpRepository
 import com.example.myapplication.data.reminder.ReminderEvent
@@ -60,7 +61,13 @@ data class AgentUiState(
     val telegramEnabled: Boolean = false,
     val telegramMcpStatus: McpConnectionStatus = McpConnectionStatus.Disconnected,
     val reminderEnabled: Boolean = false,
-    val reminderStatus: McpConnectionStatus = McpConnectionStatus.Disconnected
+    val reminderStatus: McpConnectionStatus = McpConnectionStatus.Disconnected,
+    val taskSearchEnabled: Boolean = false,
+    val taskSearchStatus: McpConnectionStatus = McpConnectionStatus.Disconnected,
+    val taskSummarizeEnabled: Boolean = false,
+    val taskSummarizeStatus: McpConnectionStatus = McpConnectionStatus.Disconnected,
+    val taskSaveEnabled: Boolean = false,
+    val taskSaveStatus: McpConnectionStatus = McpConnectionStatus.Disconnected
 )
 
 class AgentViewModel(
@@ -71,7 +78,10 @@ class AgentViewModel(
     private val agentRunner: AgentRunner,
     private val telegramMcpRepository: TelegramMcpRepository,
     private val reminderRepository: ReminderManager,
-    private val cryptoMcpRepository: CryptoMcpRepository
+    private val cryptoMcpRepository: CryptoMcpRepository,
+    private val taskSearchMcpRepository: StatelessMcpRepository,
+    private val taskSummarizeMcpRepository: StatelessMcpRepository,
+    private val taskSaveMcpRepository: StatelessMcpRepository
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(AgentUiState())
@@ -109,6 +119,9 @@ class AgentViewModel(
         refreshMcpState()
         refreshTelegramMcpState()
         refreshReminderState()
+        refreshTaskSearchState()
+        refreshTaskSummarizeState()
+        refreshTaskSaveState()
         observeReminderEvents()
     }
 
@@ -130,7 +143,11 @@ class AgentViewModel(
         if (text.isBlank() || _uiState.value.isLoading) return
         _uiState.update { it.copy(isLoading = true, error = null) }
         viewModelScope.launch {
-            if (_uiState.value.vkusVillEnabled || _uiState.value.telegramEnabled) {
+            val anyMcpEnabled = with(_uiState.value) {
+            vkusVillEnabled || telegramEnabled || reminderEnabled ||
+            taskSearchEnabled || taskSummarizeEnabled || taskSaveEnabled
+        }
+        if (anyMcpEnabled) {
                 val nodeId = _uiState.value.activeNodeId
                 runAgentWithMcp(sessionId, text, nodeId)
             } else {
@@ -427,6 +444,84 @@ class AgentViewModel(
             viewModelScope.launch {
                 val status = cryptoMcpRepository.connect()
                 _uiState.update { it.copy(reminderStatus = status) }
+            }
+        }
+    }
+
+    fun toggleTaskSearch(enabled: Boolean) {
+        taskSearchMcpRepository.enabled = enabled
+        if (enabled) {
+            _uiState.update { it.copy(taskSearchEnabled = true, taskSearchStatus = McpConnectionStatus.Connecting) }
+            viewModelScope.launch {
+                val status = taskSearchMcpRepository.connect()
+                _uiState.update { it.copy(taskSearchStatus = status) }
+            }
+        } else {
+            taskSearchMcpRepository.disconnect()
+            _uiState.update { it.copy(taskSearchEnabled = false, taskSearchStatus = McpConnectionStatus.Disconnected) }
+        }
+    }
+
+    private fun refreshTaskSearchState() {
+        val enabled = taskSearchMcpRepository.enabled
+        _uiState.update { it.copy(taskSearchEnabled = enabled) }
+        if (enabled) {
+            _uiState.update { it.copy(taskSearchStatus = McpConnectionStatus.Connecting) }
+            viewModelScope.launch {
+                val status = taskSearchMcpRepository.connect()
+                _uiState.update { it.copy(taskSearchStatus = status) }
+            }
+        }
+    }
+
+    fun toggleTaskSummarize(enabled: Boolean) {
+        taskSummarizeMcpRepository.enabled = enabled
+        if (enabled) {
+            _uiState.update { it.copy(taskSummarizeEnabled = true, taskSummarizeStatus = McpConnectionStatus.Connecting) }
+            viewModelScope.launch {
+                val status = taskSummarizeMcpRepository.connect()
+                _uiState.update { it.copy(taskSummarizeStatus = status) }
+            }
+        } else {
+            taskSummarizeMcpRepository.disconnect()
+            _uiState.update { it.copy(taskSummarizeEnabled = false, taskSummarizeStatus = McpConnectionStatus.Disconnected) }
+        }
+    }
+
+    private fun refreshTaskSummarizeState() {
+        val enabled = taskSummarizeMcpRepository.enabled
+        _uiState.update { it.copy(taskSummarizeEnabled = enabled) }
+        if (enabled) {
+            _uiState.update { it.copy(taskSummarizeStatus = McpConnectionStatus.Connecting) }
+            viewModelScope.launch {
+                val status = taskSummarizeMcpRepository.connect()
+                _uiState.update { it.copy(taskSummarizeStatus = status) }
+            }
+        }
+    }
+
+    fun toggleTaskSave(enabled: Boolean) {
+        taskSaveMcpRepository.enabled = enabled
+        if (enabled) {
+            _uiState.update { it.copy(taskSaveEnabled = true, taskSaveStatus = McpConnectionStatus.Connecting) }
+            viewModelScope.launch {
+                val status = taskSaveMcpRepository.connect()
+                _uiState.update { it.copy(taskSaveStatus = status) }
+            }
+        } else {
+            taskSaveMcpRepository.disconnect()
+            _uiState.update { it.copy(taskSaveEnabled = false, taskSaveStatus = McpConnectionStatus.Disconnected) }
+        }
+    }
+
+    private fun refreshTaskSaveState() {
+        val enabled = taskSaveMcpRepository.enabled
+        _uiState.update { it.copy(taskSaveEnabled = enabled) }
+        if (enabled) {
+            _uiState.update { it.copy(taskSaveStatus = McpConnectionStatus.Connecting) }
+            viewModelScope.launch {
+                val status = taskSaveMcpRepository.connect()
+                _uiState.update { it.copy(taskSaveStatus = status) }
             }
         }
     }

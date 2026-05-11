@@ -144,6 +144,12 @@ fun AgentScreen(modifier: Modifier = Modifier, viewModel: AgentViewModel = koinV
                 telegramMcpStatus = uiState.telegramMcpStatus,
                 reminderEnabled = uiState.reminderEnabled,
                 reminderStatus = uiState.reminderStatus,
+                taskSearchEnabled = uiState.taskSearchEnabled,
+                taskSearchStatus = uiState.taskSearchStatus,
+                taskSummarizeEnabled = uiState.taskSummarizeEnabled,
+                taskSummarizeStatus = uiState.taskSummarizeStatus,
+                taskSaveEnabled = uiState.taskSaveEnabled,
+                taskSaveStatus = uiState.taskSaveStatus,
                 onSave = { config -> viewModel.saveSessionContext(config) },
                 onSaveUserInformation = { viewModel.saveUserInformation(it) },
                 onSaveTaskMemory = { viewModel.saveTaskMemory(it) },
@@ -151,6 +157,9 @@ fun AgentScreen(modifier: Modifier = Modifier, viewModel: AgentViewModel = koinV
                 onToggleVkusVill = { viewModel.toggleVkusVill(it) },
                 onToggleTelegram = { viewModel.toggleTelegram(it) },
                 onToggleReminder = { viewModel.toggleReminder(context, it) },
+                onToggleTaskSearch = { viewModel.toggleTaskSearch(it) },
+                onToggleTaskSummarize = { viewModel.toggleTaskSummarize(it) },
+                onToggleTaskSave = { viewModel.toggleTaskSave(it) },
                 onForgetMemory = { viewModel.forgetMemory(it) },
                 onForgetAll = { viewModel.forgetAllMemory() },
                 onDismiss = { viewModel.hideSettings() }
@@ -347,6 +356,12 @@ private fun ContextSettingsSheet(
     telegramMcpStatus: McpConnectionStatus,
     reminderEnabled: Boolean,
     reminderStatus: McpConnectionStatus,
+    taskSearchEnabled: Boolean,
+    taskSearchStatus: McpConnectionStatus,
+    taskSummarizeEnabled: Boolean,
+    taskSummarizeStatus: McpConnectionStatus,
+    taskSaveEnabled: Boolean,
+    taskSaveStatus: McpConnectionStatus,
     onSave: (SessionContextConfig) -> Unit,
     onSaveUserInformation: (UserInformation) -> Unit,
     onSaveTaskMemory: (TaskMemory) -> Unit,
@@ -354,6 +369,9 @@ private fun ContextSettingsSheet(
     onToggleVkusVill: (Boolean) -> Unit,
     onToggleTelegram: (Boolean) -> Unit,
     onToggleReminder: (Boolean) -> Unit,
+    onToggleTaskSearch: (Boolean) -> Unit,
+    onToggleTaskSummarize: (Boolean) -> Unit,
+    onToggleTaskSave: (Boolean) -> Unit,
     onForgetMemory: (String) -> Unit,
     onForgetAll: () -> Unit,
     onDismiss: () -> Unit
@@ -819,6 +837,108 @@ private fun ContextSettingsSheet(
                             )
                         }
                     }
+                }
+
+                // Task Search MCP
+                Spacer(Modifier.height(12.dp))
+                Row(
+                    Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Column(Modifier.weight(1f)) {
+                        Text("Task Search (8081)", style = MaterialTheme.typography.bodyMedium)
+                        val taskSearchStatusText = when (taskSearchStatus) {
+                            is McpConnectionStatus.Disconnected -> if (taskSearchEnabled) "" else "Отключён"
+                            is McpConnectionStatus.Connecting -> "Подключение..."
+                            is McpConnectionStatus.Connected -> "Подключён · ${taskSearchStatus.tools.size} инструментов"
+                            is McpConnectionStatus.Error -> "Ошибка: ${taskSearchStatus.message}"
+                        }
+                        val taskSearchStatusColor = when (taskSearchStatus) {
+                            is McpConnectionStatus.Connected -> MaterialTheme.colorScheme.primary
+                            is McpConnectionStatus.Error -> MaterialTheme.colorScheme.error
+                            else -> MaterialTheme.colorScheme.onSurfaceVariant
+                        }
+                        if (taskSearchStatusText.isNotEmpty()) {
+                            Text(
+                                taskSearchStatusText,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = taskSearchStatusColor
+                            )
+                        }
+                    }
+                    Switch(
+                        checked = taskSearchEnabled,
+                        onCheckedChange = { onToggleTaskSearch(it) }
+                    )
+                }
+
+                // Task Summarize MCP
+                Spacer(Modifier.height(12.dp))
+                Row(
+                    Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Column(Modifier.weight(1f)) {
+                        Text("Task Summarize (8082)", style = MaterialTheme.typography.bodyMedium)
+                        val taskSummarizeStatusText = when (taskSummarizeStatus) {
+                            is McpConnectionStatus.Disconnected -> if (taskSummarizeEnabled) "" else "Отключён"
+                            is McpConnectionStatus.Connecting -> "Подключение..."
+                            is McpConnectionStatus.Connected -> "Подключён · ${taskSummarizeStatus.tools.size} инструментов"
+                            is McpConnectionStatus.Error -> "Ошибка: ${taskSummarizeStatus.message}"
+                        }
+                        val taskSummarizeStatusColor = when (taskSummarizeStatus) {
+                            is McpConnectionStatus.Connected -> MaterialTheme.colorScheme.primary
+                            is McpConnectionStatus.Error -> MaterialTheme.colorScheme.error
+                            else -> MaterialTheme.colorScheme.onSurfaceVariant
+                        }
+                        if (taskSummarizeStatusText.isNotEmpty()) {
+                            Text(
+                                taskSummarizeStatusText,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = taskSummarizeStatusColor
+                            )
+                        }
+                    }
+                    Switch(
+                        checked = taskSummarizeEnabled,
+                        onCheckedChange = { onToggleTaskSummarize(it) }
+                    )
+                }
+
+                // Task Save MCP
+                Spacer(Modifier.height(12.dp))
+                Row(
+                    Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Column(Modifier.weight(1f)) {
+                        Text("Task Save (8083)", style = MaterialTheme.typography.bodyMedium)
+                        val taskSaveStatusText = when (taskSaveStatus) {
+                            is McpConnectionStatus.Disconnected -> if (taskSaveEnabled) "" else "Отключён"
+                            is McpConnectionStatus.Connecting -> "Подключение..."
+                            is McpConnectionStatus.Connected -> "Подключён · ${taskSaveStatus.tools.size} инструментов"
+                            is McpConnectionStatus.Error -> "Ошибка: ${taskSaveStatus.message}"
+                        }
+                        val taskSaveStatusColor = when (taskSaveStatus) {
+                            is McpConnectionStatus.Connected -> MaterialTheme.colorScheme.primary
+                            is McpConnectionStatus.Error -> MaterialTheme.colorScheme.error
+                            else -> MaterialTheme.colorScheme.onSurfaceVariant
+                        }
+                        if (taskSaveStatusText.isNotEmpty()) {
+                            Text(
+                                taskSaveStatusText,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = taskSaveStatusColor
+                            )
+                        }
+                    }
+                    Switch(
+                        checked = taskSaveEnabled,
+                        onCheckedChange = { onToggleTaskSave(it) }
+                    )
                 }
             }
             item {
