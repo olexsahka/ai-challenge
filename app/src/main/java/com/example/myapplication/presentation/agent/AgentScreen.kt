@@ -150,6 +150,9 @@ fun AgentScreen(modifier: Modifier = Modifier, viewModel: AgentViewModel = koinV
                 taskSummarizeStatus = uiState.taskSummarizeStatus,
                 taskSaveEnabled = uiState.taskSaveEnabled,
                 taskSaveStatus = uiState.taskSaveStatus,
+                btcCompositionEnabled = uiState.btcCompositionEnabled,
+                onToggleBtcComposition = { viewModel.toggleBtcComposition(it) },
+                onRunBtcFlowNow = { viewModel.runBtcFlowNow() },
                 onSave = { config -> viewModel.saveSessionContext(config) },
                 onSaveUserInformation = { viewModel.saveUserInformation(it) },
                 onSaveTaskMemory = { viewModel.saveTaskMemory(it) },
@@ -362,6 +365,9 @@ private fun ContextSettingsSheet(
     taskSummarizeStatus: McpConnectionStatus,
     taskSaveEnabled: Boolean,
     taskSaveStatus: McpConnectionStatus,
+    btcCompositionEnabled: Boolean,
+    onToggleBtcComposition: (Boolean) -> Unit,
+    onRunBtcFlowNow: () -> Unit,
     onSave: (SessionContextConfig) -> Unit,
     onSaveUserInformation: (UserInformation) -> Unit,
     onSaveTaskMemory: (TaskMemory) -> Unit,
@@ -939,6 +945,31 @@ private fun ContextSettingsSheet(
                         checked = taskSaveEnabled,
                         onCheckedChange = { onToggleTaskSave(it) }
                     )
+                }
+
+                // BTC Composition (Crypto MCP → save → diff)
+                Spacer(Modifier.height(12.dp))
+                Row(
+                    Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Column(Modifier.weight(1f)) {
+                        Text("BTC композиция (Crypto MCP → save → diff)", style = MaterialTheme.typography.bodyMedium)
+                    }
+                    Switch(
+                        checked = btcCompositionEnabled,
+                        onCheckedChange = { onToggleBtcComposition(it) }
+                    )
+                }
+                if (btcCompositionEnabled) {
+                    Spacer(Modifier.height(8.dp))
+                    Button(
+                        onClick = onRunBtcFlowNow,
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text("▶ Запустить BTC флоу сейчас")
+                    }
                 }
             }
             item {

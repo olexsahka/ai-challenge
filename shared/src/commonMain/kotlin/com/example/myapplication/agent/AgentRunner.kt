@@ -196,7 +196,7 @@ class AgentRunner(
             }
             "CALCULATE" -> {
                 try {
-                    val result = evalMath(input.trim())
+                    val result = evalMath(input.trim().removeSurrounding("\"").removeSurrounding("'"))
                     "Result: $result"
                 } catch (e: Exception) {
                     "Calculation error: ${e.message}"

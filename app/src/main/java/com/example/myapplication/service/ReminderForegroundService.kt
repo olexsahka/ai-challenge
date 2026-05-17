@@ -15,6 +15,7 @@ import com.example.myapplication.data.reminder.ReminderManager
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -24,7 +25,7 @@ class ReminderForegroundService : Service() {
 
     private val reminderManager: ReminderManager by inject()
 
-    private val serviceScope = CoroutineScope(Dispatchers.IO + Job())
+    private val serviceScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
     private var sseJob: Job? = null
 
     override fun onCreate() {

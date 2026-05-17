@@ -3,9 +3,13 @@ package com.example.myapplication.presentation.agent
 import android.content.Context
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.example.myapplication.agent.ActiveSessionProvider
 import com.example.myapplication.agent.AgentRunner
 import com.example.myapplication.agent.AgentStepType
 import com.example.myapplication.agent.LLMAgent
+import com.example.myapplication.data.composition.BtcCompositionSettings
+import com.example.myapplication.data.composition.BtcTrackingController
+import com.example.myapplication.data.composition.BtcTrackingMcpProvider
 import com.example.myapplication.agent.MemoryEntry
 import com.example.myapplication.data.mcp.McpConnectionStatus
 import com.example.myapplication.data.mcp.McpRepository
@@ -29,6 +33,7 @@ import com.example.myapplication.domain.model.SessionContextConfig
 import com.example.myapplication.domain.model.TaskFsmState
 import com.example.myapplication.domain.model.SummaryData
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -67,7 +72,8 @@ data class AgentUiState(
     val taskSummarizeEnabled: Boolean = false,
     val taskSummarizeStatus: McpConnectionStatus = McpConnectionStatus.Disconnected,
     val taskSaveEnabled: Boolean = false,
-    val taskSaveStatus: McpConnectionStatus = McpConnectionStatus.Disconnected
+    val taskSaveStatus: McpConnectionStatus = McpConnectionStatus.Disconnected,
+    val btcCompositionEnabled: Boolean = false
 )
 
 class AgentViewModel(
@@ -81,8 +87,12 @@ class AgentViewModel(
     private val cryptoMcpRepository: CryptoMcpRepository,
     private val taskSearchMcpRepository: StatelessMcpRepository,
     private val taskSummarizeMcpRepository: StatelessMcpRepository,
-    private val taskSaveMcpRepository: StatelessMcpRepository
-) : ViewModel() {
+    private val taskSaveMcpRepository: StatelessMcpRepository,
+    private val btcCompositionSettings: BtcCompositionSettings,
+    private val btcTrackingMcpProvider: BtcTrackingMcpProvider
+) : ViewModel(), ActiveSessionProvider, BtcTrackingController {
+
+    override val activeSessionId: String? get() = _activeSessionId.value
 
     private val _uiState = MutableStateFlow(AgentUiState())
     val uiState: StateFlow<AgentUiState> = _uiState.asStateFlow()
@@ -104,6 +114,8 @@ class AgentViewModel(
     }.stateIn(viewModelScope, SharingStarted.Lazily, emptyList())
 
     init {
+        btcTrackingMcpProvider.bind(this)
+        refreshBtcCompositionState()
         viewModelScope.launch {
             agent.observeSessions().collect { sessions ->
                 _uiState.update { it.copy(sessions = sessions) }
@@ -144,9 +156,10 @@ class AgentViewModel(
         _uiState.update { it.copy(isLoading = true, error = null) }
         viewModelScope.launch {
             val anyMcpEnabled = with(_uiState.value) {
-            vkusVillEnabled || telegramEnabled || reminderEnabled ||
-            taskSearchEnabled || taskSummarizeEnabled || taskSaveEnabled
-        }
+                vkusVillEnabled || telegramEnabled || reminderEnabled ||
+                taskSearchEnabled || taskSummarizeEnabled || taskSaveEnabled ||
+                btcCompositionEnabled
+            }
         if (anyMcpEnabled) {
                 val nodeId = _uiState.value.activeNodeId
                 runAgentWithMcp(sessionId, text, nodeId)
@@ -514,6 +527,69 @@ class AgentViewModel(
         }
     }
 
+    // Оригинальный запрос пользователя, который агент должен повторять каждую минуту
+    private var btcTrackingPrompt: String? = null
+    private var btcTickerJob: Job? = null
+
+    override fun startBtcTracking(userPrompt: String) {
+        btcTrackingPrompt = userPrompt
+        btcCompositionSettings.enabled = true
+        _uiState.update { it.copy(btcCompositionEnabled = true) }
+        btcTickerJob?.cancel()
+        btcTickerJob = viewModelScope.launch {
+            while (true) {
+                delay(60_000)
+                val sessionId = _uiState.value.activeSession?.id ?: continue
+                val nodeId = _uiState.value.activeNodeId
+                android.util.Log.d("BtcTicker", "tick")
+                runBtcTickSilently(sessionId, nodeId)
+            }
+        }
+    }
+
+    // Тихий тик: не пишет сообщение пользователя в чат, только ответ агента
+    private suspend fun runBtcTickSilently(sessionId: String, nodeId: String?) {
+        val task = "Выполни один шаг BTC-мониторинга: вызови get_price для BTC, сохрани результат через save_to_file (имя файла: btc-snapshot-${System.currentTimeMillis()}.txt), затем вызови list_files, найди предыдущий снапшот, прочитай его через read_file и посчитай дельту цены. Выведи итог."
+        agentRunner.run(task) { step ->
+            if (step.type == AgentStepType.FINAL_ANSWER) {
+                agent.saveAssistantMessage(sessionId, step.content, nodeId)
+            }
+        }
+    }
+
+    fun stopBtcTracking() {
+        btcTickerJob?.cancel()
+        btcTickerJob = null
+        btcCompositionSettings.enabled = false
+        _uiState.update { it.copy(btcCompositionEnabled = false) }
+    }
+
+    fun toggleBtcComposition(enabled: Boolean) {
+        if (enabled) {
+            btcCompositionSettings.enabled = true
+            _uiState.update { it.copy(btcCompositionEnabled = true) }
+        } else {
+            stopBtcTracking()
+        }
+    }
+
+    fun runBtcFlowNow() {
+        val sessionId = _uiState.value.activeSession?.id ?: return
+        val nodeId = _uiState.value.activeNodeId
+        val prompt = btcTrackingPrompt ?: return
+        viewModelScope.launch {
+            runAgentWithMcp(sessionId, prompt, nodeId)
+        }
+    }
+
+    private fun refreshBtcCompositionState() {
+        // btcTrackingPrompt is not persisted — reset enabled flag on restart to avoid silent no-ops
+        if (btcTrackingPrompt == null && btcCompositionSettings.enabled) {
+            btcCompositionSettings.enabled = false
+        }
+        _uiState.update { it.copy(btcCompositionEnabled = btcCompositionSettings.enabled) }
+    }
+
     private fun refreshTaskSaveState() {
         val enabled = taskSaveMcpRepository.enabled
         _uiState.update { it.copy(taskSaveEnabled = enabled) }
@@ -535,6 +611,11 @@ class AgentViewModel(
                 agent.saveAssistantMessage(sessionId, text, nodeId)
             }
         }
+    }
+
+    override fun onCleared() {
+        super.onCleared()
+        btcTrackingMcpProvider.unbind()
     }
 
     private fun formatReminderMessage(event: ReminderEvent): String {

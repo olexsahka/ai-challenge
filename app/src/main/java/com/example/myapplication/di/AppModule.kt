@@ -44,6 +44,8 @@ import com.example.myapplication.platform.android.AndroidClock
 import com.example.myapplication.platform.android.AndroidDateFormatter
 import com.example.myapplication.platform.android.AndroidUuidGenerator
 import com.example.myapplication.platform.android.SharedPrefsKeyValueStorage
+import com.example.myapplication.data.composition.BtcCompositionSettings
+import com.example.myapplication.data.composition.BtcTrackingMcpProvider
 import com.example.myapplication.presentation.agent.AgentViewModel
 import com.example.myapplication.presentation.chat.ChatViewModel
 import okhttp3.OkHttpClient
@@ -116,12 +118,15 @@ val appModule = module {
     single { CryptoMcpRepository(androidContext(), get(qualifier = named("plain"))) }
 
     // Task MCP servers (composition demo: search → summarize → save)
-    single(named("taskSearch"))    { StatelessMcpClient(get(qualifier = named("plain")), "http://10.0.2.2:8081/mcp") }
-    single(named("taskSummarize")) { StatelessMcpClient(get(qualifier = named("plain")), "http://10.0.2.2:8082/mcp") }
-    single(named("taskSave"))      { StatelessMcpClient(get(qualifier = named("plain")), "http://10.0.2.2:8083/mcp") }
-    single(named("taskSearch"))    { StatelessMcpRepository(androidContext(), get(named("taskSearch")), "task_search_enabled") }
-    single(named("taskSummarize")) { StatelessMcpRepository(androidContext(), get(named("taskSummarize")), "task_summarize_enabled") }
-    single(named("taskSave"))      { StatelessMcpRepository(androidContext(), get(named("taskSave")), "task_save_enabled") }
+    single(named("taskSearchClient"))    { StatelessMcpClient(get(qualifier = named("plain")), "http://10.0.2.2:8081/mcp") }
+    single(named("taskSummarizeClient")) { StatelessMcpClient(get(qualifier = named("plain")), "http://10.0.2.2:8082/mcp") }
+    single(named("taskSaveClient"))      { StatelessMcpClient(get(qualifier = named("plain")), "http://10.0.2.2:8083/mcp") }
+    single(named("taskSearch"))    { StatelessMcpRepository(androidContext(), get(named("taskSearchClient")), "task_search_enabled") }
+    single(named("taskSummarize")) { StatelessMcpRepository(androidContext(), get(named("taskSummarizeClient")), "task_summarize_enabled") }
+    single(named("taskSave"))      { StatelessMcpRepository(androidContext(), get(named("taskSaveClient")), "task_save_enabled") }
+
+    single { BtcCompositionSettings(androidContext()) }
+    single { BtcTrackingMcpProvider() }
 
     single { AgentRunner(
         get<LLMApiClient>(),
@@ -131,9 +136,10 @@ val appModule = module {
         get<CryptoMcpRepository>(),
         get<StatelessMcpRepository>(named("taskSearch")),
         get<StatelessMcpRepository>(named("taskSummarize")),
-        get<StatelessMcpRepository>(named("taskSave"))
+        get<StatelessMcpRepository>(named("taskSave")),
+        get<BtcTrackingMcpProvider>()
     ) }
 
     viewModel { ChatViewModel(get(), get(), get(), get()) }
-    viewModel { AgentViewModel(get(), get(), get(), get(), get(), get(), get<ReminderManager>(), get<CryptoMcpRepository>(), get<StatelessMcpRepository>(named("taskSearch")), get<StatelessMcpRepository>(named("taskSummarize")), get<StatelessMcpRepository>(named("taskSave"))) }
+    viewModel { AgentViewModel(get(), get(), get(), get(), get(), get(), get<ReminderManager>(), get<CryptoMcpRepository>(), get<StatelessMcpRepository>(named("taskSearch")), get<StatelessMcpRepository>(named("taskSummarize")), get<StatelessMcpRepository>(named("taskSave")), get(), get<BtcTrackingMcpProvider>()) }
 }
