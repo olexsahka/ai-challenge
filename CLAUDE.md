@@ -2,6 +2,121 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## ═══ TOKEN EFFICIENCY RULES ═══
+
+### Модель по задаче
+- **Haiku** — простые правки (удалить строку, переименовать, добавить импорт, форматирование)
+- **Sonnet** — реализация фич, дебаг, ревью, архитектурные решения (дефолт)
+- Предлагать `/model haiku` перед простыми правками
+
+### Параллельность
+- Android (app/, shared/) и Backend (IdeaProjects/) — **всегда запускать параллельно** если нет явной зависимости
+- Ревью android-review + backend-review — **всегда параллельно**
+- Планировщики plan-android + plan-backend — **всегда параллельно**
+
+### Diff-first подход
+- При ревью/анализе — сначала `git diff master --name-only`, читать только изменённые файлы
+- Читать другие файлы только если изменённый файл явно на них ссылается
+- НЕ читать весь проект для понимания контекста — использовать grep по нужным символам
+
+### Дебаг без участия пользователя
+- Логи Android: `/debug-android` — не ждать пока пользователь вставит logcat
+- Логи Backend: `/debug-backend` — не ждать пока пользователь вставит docker logs
+- После backend rebuild: **автоматически** делать curl проверку tools/list и каждого нового tool
+- При Docker: всегда проверять что образ пересобран (`docker compose build`), не использовать кэш
+
+## ═══ ANTI-HALLUCINATION RULES — обязательны для ВСЕХ агентов ═══
+
+### RULE-1: READ BEFORE ACT
+Перед любым действием — прочитай нужные файлы через Read/Bash.
+Никогда не полагайся на то что "помнишь" из предыдущих шагов.
+Каждый шаг начинается с чтения актуального состояния файлов.
+
+### RULE-2: VERIFY INPUTS EXIST
+Перед стартом работы проверь что входные файлы существуют:
+```bash
+ls docs/specs/[feature].md docs/adr/[feature].md
+```
+Если файл не найден — СТОП. Сообщи: "❌ Не найден: [путь]. Нельзя продолжать."
+Никогда не придумывай содержимое отсутствующего файла.
+
+### RULE-3: QUOTE DON'T INVENT
+При работе с требованиями — цитируй из документа, не перефразируй по памяти.
+Формат: "Согласно docs/specs/[feature].md, раздел API: [цитата]"
+
+### RULE-4: EXPLICIT UNKNOWNS
+Если что-то неясно или отсутствует в документе — явно зафикируй:
+"⚠️ НЕЯСНО: [что именно]. Дефолтное решение: [решение]. Требует подтверждения."
+Никогда не угадывай молча.
+
+### RULE-5: OUTPUT CHECKSUM
+После завершения любого шага — выведи что именно было сделано:
+```
+✅ ВЫПОЛНЕНО:
+  Создан: docs/specs/[feature].md
+  Обновлён: docs/tasks/[feature].md
+⚠️ НЕЯСНО (требует ответа):
+  - [вопрос 1]
+```
+
+### RULE-6: ONE SESSION — ONE ROLE
+Каждый агент выполняет ТОЛЬКО свою роль.
+Если кажется что нужно сделать что-то из другой роли — СТОП.
+Зафикируй задачу для нужного агента и завершай свой шаг.
+
+### RULE-7: CONTEXT HYGIENE
+Агент НЕ читает файлы которые не нужны для его текущей задачи.
+Читай ТОЛЬКО: свой agent.md, нужные скилы, входные документы задачи.
+
+## ═══ ФЛОУ РАЗРАБОТКИ (Documentation Driven Development) ═══
+
+```
+ДОКУМЕНТ создаётся → ВЕРИФИЦИРУЕТСЯ → КОД пишется по документу
+Никакой код без: ADR + Spec + Tech Plan
+```
+
+### Команды (запускать в чистых сессиях)
+```
+/new-feature "name"    [Opus]   → ADR + Spec (аналитик)
+/assign "name"         [Sonnet] → назначает планировщиков (менеджер)
+/plan-backend "name"   [Opus]   → Backend Tech Plan
+/plan-android "name"   [Opus]   → Android Tech Plan
+
+backend-repo: bash .claude/hooks/validate-against-plan.sh → разработчик
+android-repo: bash .claude/hooks/validate-against-plan.sh → android-shared → android-ui
+
+/review-run "name"     [Opus]   → android-review + backend-review агенты → вердикт
+
+REJECTED → /rework → validate-against-plan.sh → fix → /review-run
+APPROVED → merge ✅
+```
+
+### Статусы задач
+📋 BACKLOG → 🔍 ANALYSIS → 📄 ADR_READY → 📐 PLANNED
+→ 🔨 IN_DEV → ✅ DEV_DONE → 🔍 IN_REVIEW → 🔄 REWORK_N → ✅ APPROVED
+
+### Агенты и их расположение
+
+| Агент | Где | Роль |
+|-------|-----|------|
+| analyst | ~/.claude/agents/ | глобальный, Opus — требования, ADR, Spec |
+| manager | ~/.claude/agents/ | глобальный, Sonnet — assign, rework |
+| android-planner | ~/.claude/agents/ | глобальный, Opus — Android Tech Plan |
+| backend-planner | ~/.claude/agents/ | глобальный, Opus — Backend Tech Plan |
+| orchestrator | .claude/agents/ | локальный — координация без кода |
+| android-shared | .claude/agents/ | локальный — shared/ KMP |
+| android-ui | .claude/agents/ | локальный — app/ UI/ViewModel/DI |
+| backend | .claude/agents/ | локальный — Ktor/Spring Boot серверы |
+| android-review | .claude/agents/ | локальный, read-only — ревью Android |
+| backend-review | .claude/agents/ | локальный, read-only — ревью бэкенда |
+
+### Хуки
+```bash
+bash .claude/hooks/validate-against-plan.sh [feature] [shared|ui|backend]
+bash .claude/hooks/check-dod.sh [feature] [SH-01|UI-01|BE-01]
+bash .claude/hooks/spec-coverage.sh [feature] [plan-android|plan-backend]
+```
+
 ## Build & Run Commands
 
 ```bash

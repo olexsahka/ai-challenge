@@ -46,8 +46,16 @@ import com.example.myapplication.platform.android.AndroidUuidGenerator
 import com.example.myapplication.platform.android.SharedPrefsKeyValueStorage
 import com.example.myapplication.data.composition.BtcCompositionSettings
 import com.example.myapplication.data.composition.BtcTrackingMcpProvider
+import com.example.myapplication.data.rag.RagAssetLoader
+import com.example.myapplication.data.rag.RagIndexer
+import com.example.myapplication.data.rag.RagRepository
+import com.example.myapplication.data.rag.chunker.FixedSizeChunker
+import com.example.myapplication.data.rag.chunker.StructuralChunker
+import com.example.myapplication.data.rag.embedder.TfIdfEmbedder
 import com.example.myapplication.presentation.agent.AgentViewModel
 import com.example.myapplication.presentation.chat.ChatViewModel
+import com.example.myapplication.presentation.rag.RagChatViewModel
+import com.example.myapplication.presentation.rag.RagSettingsViewModel
 import okhttp3.OkHttpClient
 import java.util.concurrent.TimeUnit
 import org.koin.android.ext.koin.androidContext
@@ -142,4 +150,32 @@ val appModule = module {
 
     viewModel { ChatViewModel(get(), get(), get(), get()) }
     viewModel { AgentViewModel(get(), get(), get(), get(), get(), get(), get<ReminderManager>(), get<CryptoMcpRepository>(), get<StatelessMcpRepository>(named("taskSearch")), get<StatelessMcpRepository>(named("taskSummarize")), get<StatelessMcpRepository>(named("taskSave")), get(), get<BtcTrackingMcpProvider>()) }
+}
+
+val ragModule = module {
+    single { RagAssetLoader { androidContext().assets.open(it) } }
+    single { get<AppDatabase>().ragChunkDao() }
+    single { get<AppDatabase>().ragVocabularyDao() }
+    single { FixedSizeChunker() }
+    single { StructuralChunker() }
+    single { TfIdfEmbedder() }
+    single {
+        RagIndexer(
+            loader = get(),
+            fixedSizeChunker = get(),
+            structuralChunker = get(),
+            embedder = get<TfIdfEmbedder>(),
+            chunkDao = get(),
+            vocabDao = get()
+        )
+    }
+    single {
+        RagRepository(
+            prefs = androidContext().getSharedPreferences("rag_prefs", android.content.Context.MODE_PRIVATE),
+            indexer = get(),
+            chunkDao = get()
+        )
+    }
+    viewModel { RagChatViewModel(get()) }
+    viewModel { RagSettingsViewModel(get()) }
 }

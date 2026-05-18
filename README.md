@@ -334,3 +334,144 @@ app/src/test/
 - **`buildHistory` uses `.first()`** on the Flow, which reads the DB state at the moment of the call. Under very high concurrency this could miss a just-inserted message, but in practice the user message is inserted synchronously before `buildHistory` is called.
 - **Summary regeneration is eager** — when the M threshold is crossed, the summary API call is made synchronously as part of `sendMessage`, adding latency to that request.
 - **Compression N and M are integers only** — free-form float or negative values are rejected in the UI (digit-only filter, coerced to minimum 1 on save).
+
+---
+
+## Claude Code Team — флоу разработки
+
+Проект использует **Documentation Driven Development**: код пишется только после создания ADR + Spec + Tech Plan.
+
+### Агенты
+
+#### Глобальные (`~/.claude/agents/`) — доступны во всех проектах
+| Агент | Модель | Роль |
+|-------|--------|------|
+| `analyst` | Opus | Собирает требования, создаёт ADR + Spec |
+| `manager` | Sonnet | Назначает планировщиков, обрабатывает rework |
+| `android-planner` | Opus | Создаёт Android Tech Plan (SH-* + UI-* задачи) |
+| `backend-planner` | Opus | Создаёт Backend Tech Plan (BE-* задачи) |
+
+> `android-planner` и `backend-planner` при старте сообщают текущую директорию и ждут подтверждения — они глобальные и могут запуститься не в том проекте.
+
+#### Локальные (`.claude/agents/`) — только этот проект
+| Агент | Права | Зона |
+|-------|-------|------|
+| `orchestrator` | Read, Glob, Grep, Agent | Координация, не пишет код |
+| `android-shared` | Read, Edit, Write, Glob, Grep, Bash | `shared/` KMP модуль |
+| `android-ui` | Read, Edit, Write, Glob, Grep, Bash | `app/` UI, ViewModel, Koin, Room |
+| `backend` | Read, Edit, Write, Glob, Grep, Bash | Внешние бэкенд-проекты |
+| `web` | Read, Edit, Write, Glob, Grep, Bash | `webClient/` Kotlin/JS |
+| `android-review` | Read, Glob, Grep, Bash | Ревью Android — только читает |
+| `backend-review` | Read, Glob, Grep, Bash | Ревью бэкенда — только читает |
+
+---
+
+### Флоу для новой фичи
+
+> **Каждый шаг = новая сессия.** Это защита от деградации контекста.
+
+#### Шаг 1 — Требования и документация
+```
+/new-feature "название-фичи"
+```
+Аналитик (Opus) задаёт вопросы, создаёт:
+- `docs/adr/название-фичи.md`
+- `docs/specs/название-фичи.md`
+- `docs/tasks/название-фичи.md`
+
+Закрыть сессию после OUTPUT CHECKSUM.
+
+#### Шаг 2 — Назначение планировщиков
+```
+/assign "название-фичи"
+```
+Менеджер читает документы и определяет: нужен ли `/plan-backend`, `/plan-android`, или оба и в каком порядке.
+
+#### Шаг 3 — Tech Plans
+Если есть бэкенд (новая сессия):
+```
+/plan-backend "название-фичи"
+```
+Создаёт `docs/plans/название-фичи-backend.md` с задачами BE-01..N, API контрактом, сигнатурами.
+
+Потом (новая сессия):
+```
+/plan-android "название-фичи"
+```
+Создаёт `docs/plans/название-фичи-android.md` с задачами SH-01..N и UI-01..N.
+
+#### Шаг 4 — Разработка
+
+**Бэкенд** (сессия в папке бэкенд-проекта):
+```bash
+bash .claude/hooks/validate-against-plan.sh название-фичи backend
+# → агент backend пишет код строго по выводу
+bash .claude/hooks/check-dod.sh название-фичи BE-01
+```
+
+**Android shared** (сессия в MyApplication):
+```bash
+bash .claude/hooks/validate-against-plan.sh название-фичи shared
+# → агент android-shared пишет domain/interfaces в shared/
+bash .claude/hooks/check-dod.sh название-фичи SH-01
+```
+
+**Android UI** (после SH-* готовы):
+```bash
+bash .claude/hooks/validate-against-plan.sh название-фичи ui
+# → агент android-ui пишет Compose/ViewModel/Koin в app/
+bash .claude/hooks/check-dod.sh название-фичи UI-01
+```
+
+> Разработчик **не пишет код "из головы"** — только по выводу `validate-against-plan.sh`.
+> Хочешь добавить что-то чего нет в выводе → стоп → вопрос менеджеру.
+
+#### Шаг 5 — Ревью
+```
+/review-run "название-фичи"
+```
+Запускаются `android-review` + `backend-review` параллельно. Создаётся `docs/reviews/название-фичи-review-1.md`.
+
+- **APPROVED** → merge ✅
+- **REJECTED** → шаг 6
+
+#### Шаг 6 — Доработка (если REJECTED)
+```
+/rework "название-фичи"
+```
+Менеджер читает review, обновляет планы. Разработчики снова запускают `validate-against-plan.sh`, исправляют, затем снова `/review-run`.
+
+---
+
+### Статусы задач
+```
+📋 BACKLOG → 🔍 ANALYSIS → 📄 ADR_READY → 📐 PLANNED
+→ 🔨 IN_DEV → ✅ DEV_DONE → 🔍 IN_REVIEW → 🔄 REWORK_N → ✅ APPROVED
+```
+
+Текущий статус всех фич:
+```
+/status
+```
+
+### Хуки
+```bash
+# Показывает задачи и сигнатуры из плана — запускать перед разработкой
+bash .claude/hooks/validate-against-plan.sh <feature> <shared|ui|backend>
+
+# Проверяет DoD задачи — запускать после каждой задачи
+bash .claude/hooks/check-dod.sh <feature> <SH-01|UI-01|BE-01>
+
+# Проверяет покрытие AC из Spec в плане
+bash .claude/hooks/spec-coverage.sh <feature> <plan-android|plan-backend>
+```
+
+### Документация
+```
+docs/
+├── adr/          — Architecture Decision Records
+├── specs/        — Feature Specifications
+├── plans/        — Tech Plans (backend + android)
+├── tasks/        — Статусы задач
+└── reviews/      — Review reports
+```

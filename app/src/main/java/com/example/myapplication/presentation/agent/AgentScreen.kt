@@ -110,12 +110,13 @@ private val TEMPERATURE_OPTIONS = listOf(0.0f, 0.7f, 1.0f, 1.2f)
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun AgentScreen(modifier: Modifier = Modifier, viewModel: AgentViewModel = koinViewModel()) {
+fun AgentScreen(viewModel: AgentViewModel = koinViewModel()) {
     val uiState by viewModel.uiState.collectAsState()
     val messages by viewModel.messages.collectAsState()
     val snackbarHostState = remember { SnackbarHostState() }
     var inputText by remember { mutableStateOf("") }
     val context = androidx.compose.ui.platform.LocalContext.current
+
 
     LaunchedEffect(uiState.reminderEnabled) {
         if (uiState.reminderEnabled) ReminderForegroundService.start(context)
@@ -171,7 +172,7 @@ fun AgentScreen(modifier: Modifier = Modifier, viewModel: AgentViewModel = koinV
     }
 
     Scaffold(
-        modifier = modifier,
+        modifier = Modifier.fillMaxSize(),
         topBar = {
             TopAppBar(
                 title = {
@@ -194,13 +195,13 @@ fun AgentScreen(modifier: Modifier = Modifier, viewModel: AgentViewModel = koinV
                                 style = MaterialTheme.typography.labelMedium
                             )
                         }
-                        IconButton(onClick = { viewModel.showSettings() }) {
-                            Icon(
-                                Icons.Filled.Settings,
-                                contentDescription = "Context settings",
-                                tint = MaterialTheme.colorScheme.onPrimary
-                            )
-                        }
+                    }
+                    IconButton(onClick = { viewModel.showSettings() }) {
+                        Icon(
+                            Icons.Filled.Settings,
+                            contentDescription = "Context settings",
+                            tint = MaterialTheme.colorScheme.onPrimary
+                        )
                     }
                     IconButton(onClick = { viewModel.newSession() }) {
                         Icon(
