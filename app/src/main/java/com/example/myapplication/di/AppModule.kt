@@ -173,7 +173,10 @@ val ragModule = module {
         RagRepository(
             prefs = androidContext().getSharedPreferences("rag_prefs", android.content.Context.MODE_PRIVATE),
             indexer = get(),
-            chunkDao = get()
+            chunkDao = get(),
+            vocabDao = get(),
+            llmApiClient = get(),
+            ioDispatcher = kotlinx.coroutines.Dispatchers.IO
         )
     }
     viewModel { RagChatViewModel(get()) }
