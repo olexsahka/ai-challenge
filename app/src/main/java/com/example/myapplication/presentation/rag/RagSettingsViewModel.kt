@@ -4,6 +4,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.myapplication.data.rag.RagRepository
 import com.example.myapplication.data.rag.model.ChunkingStrategy
+import com.example.myapplication.data.rag.model.RerankConfig
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
@@ -27,7 +28,16 @@ class RagSettingsViewModel(
 
     init {
         val current = ragRepository.getStrategy()
-        _uiState.value = RagSettingsUiState.Idle(current)
+        val rerankConfig = ragRepository.getRerankConfig()
+        _uiState.value = RagSettingsUiState.Idle(current, rerankConfig)
+    }
+
+    fun onSaveRerankConfig(config: RerankConfig) {
+        ragRepository.setRerankConfig(config)
+        val currentState = _uiState.value
+        if (currentState is RagSettingsUiState.Idle) {
+            _uiState.value = currentState.copy(rerankConfig = config)
+        }
     }
 
     fun onSave(selected: ChunkingStrategy) {
@@ -62,7 +72,8 @@ class RagSettingsViewModel(
             ragRepository.reindex(strategy) { progress ->
                 _uiState.value = RagSettingsUiState.Saving(progress)
             }
-            _uiState.value = RagSettingsUiState.Idle(strategy)
+            val rerankConfig = ragRepository.getRerankConfig()
+            _uiState.value = RagSettingsUiState.Idle(strategy, rerankConfig)
             _snackbarMessage.emit("Индексация завершена")
             kotlinx.coroutines.delay(1500)
             _navigateBack.emit(Unit)

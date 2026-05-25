@@ -12,7 +12,9 @@ import com.example.myapplication.data.rag.model.ChunkingStrategy
 import com.example.myapplication.data.rag.model.IndexProgress
 import com.example.myapplication.data.rag.model.RagAnswer
 import com.example.myapplication.data.rag.model.RagChunk
+import com.example.myapplication.data.rag.model.RerankConfig
 import com.example.myapplication.data.rag.model.VocabEntry
+import com.example.myapplication.data.rag.reranker.RagReranker
 import com.example.myapplication.data.rag.retriever.RagRetriever
 import com.example.myapplication.domain.api.LLMApiClient
 import kotlinx.coroutines.CoroutineDispatcher
@@ -27,6 +29,11 @@ import java.nio.ByteOrder
 private const val KEY_STRATEGY = "chunking_strategy"
 private const val KEY_LAST_INDEXED_AT = "last_indexed_at"
 private const val KEY_INDEXED_STRATEGY = "indexed_strategy"
+private const val KEY_RERANK_ENABLED = "rerank_enabled"
+private const val KEY_RERANK_THRESHOLD = "rerank_threshold"
+private const val KEY_RERANK_PRE_FILTER_K = "rerank_pre_filter_k"
+private const val KEY_RERANK_POST_FILTER_K = "rerank_post_filter_k"
+private const val KEY_QUERY_REWRITE_ENABLED = "query_rewrite_enabled"
 
 class RagRepository(
     private val prefs: SharedPreferences,
@@ -40,6 +47,7 @@ class RagRepository(
     val isIndexing: StateFlow<Boolean> = _isIndexing.asStateFlow()
 
     private val retriever = RagRetriever()
+    private val reranker = RagReranker()
 
     fun getStrategy(): ChunkingStrategy {
         val name = prefs.getString(KEY_STRATEGY, ChunkingStrategy.FIXED_SIZE.name)
@@ -61,6 +69,24 @@ class RagRepository(
         } catch (e: IllegalArgumentException) {
             null
         }
+    }
+
+    fun getRerankConfig(): RerankConfig = RerankConfig(
+        rerankEnabled = prefs.getBoolean(KEY_RERANK_ENABLED, false),
+        threshold = prefs.getFloat(KEY_RERANK_THRESHOLD, 0.15f),
+        preFilterK = prefs.getInt(KEY_RERANK_PRE_FILTER_K, 10),
+        postFilterK = prefs.getInt(KEY_RERANK_POST_FILTER_K, 3),
+        queryRewriteEnabled = prefs.getBoolean(KEY_QUERY_REWRITE_ENABLED, false)
+    )
+
+    fun setRerankConfig(config: RerankConfig) {
+        prefs.edit()
+            .putBoolean(KEY_RERANK_ENABLED, config.rerankEnabled)
+            .putFloat(KEY_RERANK_THRESHOLD, config.threshold)
+            .putInt(KEY_RERANK_PRE_FILTER_K, config.preFilterK)
+            .putInt(KEY_RERANK_POST_FILTER_K, config.postFilterK)
+            .putBoolean(KEY_QUERY_REWRITE_ENABLED, config.queryRewriteEnabled)
+            .apply()
     }
 
     suspend fun isIndexed(): Boolean {
@@ -98,9 +124,44 @@ class RagRepository(
             retriever.query(query, vocabulary, chunks, topK)
         }
 
-    suspend fun askWithRag(question: String, topK: Int = 4): RagAnswer =
+    suspend fun searchWithScores(query: String, topK: Int = 4): List<Pair<RagChunk, Float>> =
         withContext(ioDispatcher) {
-            val chunks = search(question, topK)
+            if (!isIndexed()) return@withContext emptyList()
+            val strategy = getIndexedStrategy() ?: getStrategy()
+            val vocabEntities = vocabDao.getAll(strategy.name)
+            val chunkEntities = chunkDao.getAll(strategy.name)
+            val vocabulary = vocabEntities.toVocabulary()
+            val chunks = chunkEntities.map { it.toRagChunk(strategy) }
+            retriever.queryWithScores(query, vocabulary, chunks, topK)
+        }
+
+    suspend fun askWithRag(question: String, topK: Int = 4): RagAnswer =
+        askWithRag(question, getRerankConfig(), topK)
+
+    suspend fun askWithRag(question: String, config: RerankConfig, topK: Int = 4): RagAnswer =
+        withContext(ioDispatcher) {
+            // Query rewrite
+            val effectiveQuery = if (config.queryRewriteEnabled) {
+                rewriteQuery(question) ?: question
+            } else {
+                null
+            }
+            val searchQuery = effectiveQuery ?: question
+
+            // Retrieve with scores using preFilterK when reranking enabled
+            val preK = if (config.rerankEnabled) config.preFilterK else topK
+            val scored = searchWithScores(searchQuery, preK)
+
+            // Rerank
+            val (finalScored, filteredCount) = if (config.rerankEnabled) {
+                reranker.rerank(scored, config.threshold, config.postFilterK)
+            } else {
+                scored to 0
+            }
+
+            val chunks = finalScored.map { it.first }
+            val scores = finalScored.map { it.second }
+
             val request = ChatRequest(
                 model = "gpt-4o-mini",
                 temperature = 0.7f,
@@ -114,14 +175,35 @@ class RagRepository(
                 input = listOf(
                     InputMessage(
                         role = "user",
-                        content = buildRagPromptContent(chunks, question)
+                        content = buildRagPromptContent(chunks, searchQuery)
                     )
                 )
             )
             val response = llmApiClient.sendMessage(request)
             val answer = response.extractText() ?: ""
-            RagAnswer(answer = answer, sources = chunks)
+            RagAnswer(
+                answer = answer,
+                sources = chunks,
+                rewrittenQuery = effectiveQuery,
+                scores = scores,
+                filteredCount = filteredCount
+            )
         }
+
+    private suspend fun rewriteQuery(question: String): String? {
+        return try {
+            val request = ChatRequest(
+                model = "gpt-4o-mini",
+                temperature = 0.0f,
+                maxOutputTokens = null,
+                instructions = "Rewrite the following question to be more specific and effective for document retrieval. Return only the rewritten question, nothing else.",
+                input = listOf(InputMessage(role = "user", content = question))
+            )
+            llmApiClient.sendMessage(request).extractText()?.trim()
+        } catch (e: Exception) {
+            null
+        }
+    }
 
     suspend fun askWithoutRag(question: String): String =
         withContext(ioDispatcher) {

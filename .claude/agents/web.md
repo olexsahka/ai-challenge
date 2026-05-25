@@ -323,6 +323,93 @@ object App : KoinComponent {
 
 ---
 
+## KMP-правила для новых фич
+
+Проект — KMP. Каждая новая фича должна уважать границу shared/platform.
+
+### Граница модулей
+
+```
+shared/commonMain   — бизнес-логика, domain, агент, API-модели
+shared/jsMain       — JS-реализации платформенных интерфейсов
+webClient/jsMain    — UI (React-компоненты, ViewModel, экраны)
+```
+
+**Золотое правило:** если логика может быть переиспользована на Android — она идёт в `shared`. Если это чисто UI или браузер-специфика — остаётся в `webClient`.
+
+### Что НЕЛЬЗЯ делать в webClient
+
+| Запрещено | Почему | Правильно |
+|---|---|---|
+| Дублировать бизнес-логику из shared | Нарушение DRY, расхождение поведения | Использовать `LLMAgent`, репозитории из shared |
+| Обращаться к localStorage напрямую | Уже обёрнуто в `JsKeyValueStorage` | `get<KeyValueStorage>(named("data"))` через Koin |
+| Создавать собственный HTTP-клиент | Уже есть `KtorLLMApiClient` в shared | Использовать `LLMApiClient` через Koin |
+| Парсить JSON вручную | Модели уже есть в `data/api/model/` | Использовать `ChatRequest`, `ChatResponse` |
+| Хранить состояние сессий вне репозитория | Рассинхронизация с Android | Использовать `JsSessionRepository` через Koin |
+
+### Когда нужно добавить код в shared (не делай сам — сообщи)
+
+Если для новой фичи нужно:
+- Новый domain-метод в `LLMAgent`
+- Новый интерфейс репозитория
+- Новая платформенная абстракция (`expect/actual`)
+- Новая бизнес-логика, которая понадобится и на Android
+
+→ **Остановись. Сообщи пользователю.** Это задача для агента `android-shared`.
+
+### Как правильно добавлять новую фичу
+
+**Шаг 1 — Проверь, есть ли нужное в shared:**
+```bash
+# Ищи нужный API перед написанием кода
+grep -r "fun sendMessage\|fun getBySession\|interface.*Repository" shared/src/commonMain/
+```
+
+**Шаг 2 — Используй Koin, не создавай зависимости вручную:**
+```kotlin
+// BAD — создаёшь зависимости руками
+val agent = LLMAgent(KtorLLMApiClient(...), JsSessionRepository(...), ...)
+
+// GOOD — берёшь из Koin
+object App : KoinComponent {
+    val agent: LLMAgent by inject()
+    val sessionRepo: SessionRepository by inject()
+}
+```
+
+**Шаг 3 — ViewModel работает только с shared API:**
+```kotlin
+class NewFeatureViewModel {
+    private val agent: LLMAgent = App.agent          // из shared
+    private val repo: SessionRepository = App.sessionRepo  // из shared
+    // Никаких прямых JS API здесь
+}
+```
+
+**Шаг 4 — Платформенный код только в jsMain shared, не в webClient:**
+```kotlin
+// BAD — в webClient/src/jsMain:
+val storage = localStorage.getItem("key")  // прямой браузер API
+
+// GOOD — через абстракцию из shared:
+val storage: KeyValueStorage by inject(named("data"))
+val value = storage.getString("key")
+```
+
+### expect/actual — не создавай новых без согласования
+
+Если думаешь добавить `expect fun something()` — это изменение в `shared/commonMain`. Сообщи пользователю, не делай самостоятельно.
+
+### Проверочный чеклист перед написанием новой фичи
+
+- [ ] Бизнес-логика уже есть в shared? (если нет — нужен `android-shared` агент)
+- [ ] Использую Koin для получения зависимостей, не создаю их вручную?
+- [ ] ViewModel зависит только от shared API (LLMAgent, репозитории)?
+- [ ] Не обращаюсь к браузерным API напрямую там, где есть платформенная абстракция?
+- [ ] Компонент содержит только рендеринг, не логику?
+
+---
+
 ## Технические ограничения
 
 - `kotlin.incremental.js.ir=false` в `gradle.properties` — обязательно (баг Kotlin 2.1.0)

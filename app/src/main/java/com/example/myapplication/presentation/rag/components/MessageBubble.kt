@@ -3,7 +3,9 @@ package com.example.myapplication.presentation.rag.components
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -52,9 +54,27 @@ fun MessageBubble(message: RagChatMessage, modifier: Modifier = Modifier) {
                     style = MaterialTheme.typography.bodyMedium
                 )
             }
+            if (message.rewrittenQuery != null) {
+                Spacer(Modifier.height(2.dp))
+                Text(
+                    text = "Поисковый запрос: ${message.rewrittenQuery}",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.outline,
+                    modifier = Modifier.padding(top = 2.dp)
+                )
+            }
+            if (message.filteredCount > 0) {
+                Text(
+                    text = "Отсеяно: ${message.filteredCount}",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.outline,
+                    modifier = Modifier.padding(top = 2.dp)
+                )
+            }
             if (message.sources.isNotEmpty()) {
                 SourcesPanel(
                     sources = message.sources,
+                    scores = message.scores,
                     modifier = Modifier.padding(top = 4.dp)
                 )
             }

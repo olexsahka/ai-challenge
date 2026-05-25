@@ -1,4 +1,4 @@
-# Shared Module — Public API
+я # Shared Module — Public API
 
 Модуль `:shared` содержит бизнес-логику приложения, общую для Android и Web платформ.
 

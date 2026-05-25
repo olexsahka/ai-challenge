@@ -7,5 +7,8 @@ data class RagChatMessage(
     val role: RagRole,
     val text: String,
     val sources: List<RagChunk> = emptyList(),
-    val isError: Boolean = false
+    val isError: Boolean = false,
+    val scores: List<Float> = emptyList(),
+    val rewrittenQuery: String? = null,
+    val filteredCount: Int = 0
 )

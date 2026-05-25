@@ -77,12 +77,16 @@ class RagChatViewModel(
         viewModelScope.launch {
             try {
                 if (isRag) {
-                    val ragAnswer = ragRepository.askWithRag(text)
+                    val config = ragRepository.getRerankConfig()
+                    val ragAnswer = ragRepository.askWithRag(text, config)
                     val assistantMessage = RagChatMessage(
                         id = UUID.randomUUID().toString(),
                         role = RagRole.ASSISTANT,
                         text = ragAnswer.answer,
-                        sources = ragAnswer.sources
+                        sources = ragAnswer.sources,
+                        scores = ragAnswer.scores,
+                        rewrittenQuery = ragAnswer.rewrittenQuery,
+                        filteredCount = ragAnswer.filteredCount
                     )
                     _state.value = _state.value.copy(
                         ragMessages = _state.value.ragMessages + assistantMessage,

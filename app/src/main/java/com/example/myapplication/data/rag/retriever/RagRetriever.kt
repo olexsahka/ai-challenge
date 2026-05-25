@@ -14,7 +14,14 @@ class RagRetriever {
         vocabulary: Map<String, VocabEntry>,
         chunks: List<RagChunk>,
         topK: Int = 4
-    ): List<RagChunk> {
+    ): List<RagChunk> = queryWithScores(queryText, vocabulary, chunks, topK).map { it.first }
+
+    fun queryWithScores(
+        queryText: String,
+        vocabulary: Map<String, VocabEntry>,
+        chunks: List<RagChunk>,
+        topK: Int = 4
+    ): List<Pair<RagChunk, Float>> {
         if (chunks.isEmpty() || vocabulary.isEmpty()) return emptyList()
 
         val queryVector = buildQueryVector(queryText, vocabulary)
@@ -23,7 +30,6 @@ class RagRetriever {
             .map { chunk -> chunk to cosineSimilarity(queryVector, chunk.embedding!!) }
             .sortedByDescending { it.second }
             .take(topK)
-            .map { it.first }
     }
 
     private fun buildQueryVector(queryText: String, vocabulary: Map<String, VocabEntry>): FloatArray {
